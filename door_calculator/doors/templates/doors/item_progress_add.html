@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+    <h3 class="mb-4 text-center">📈 Додати прогрес замовлення</h3>
+
+    <!-- 🔹 Форма вибору замовлення (GET) -->
+    <form method="get" class="mb-4">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-8">
+          <label class="form-label fw-bold">Оберіть замовлення</label>
+          <select name="order"
+                  class="form-select"
+                  onchange="this.form.submit()">
+            <option value="">— не обрано —</option>
+            {% for o in all_orders %}
+              <option value="{{ o.id }}"
+                      {% if selected_order and o.id == selected_order.id %}selected{% endif %}>
+                №{{ o.order_number }} від {{ o.created_at|date:"d.m.Y" }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </form>
+    <!-- 🔹 Форма збереження прогресу (POST) -->
+    {% if selected_order %}
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="order_id" value="{{ selected_order.id }}">
+
+      <div class="card mb-4">
+        <div class="card-body">
+          <h5 class="mb-3">
+            Замовлення №{{ selected_order.order_number }}
+            від {{ selected_order.created_at|date:"d.m.Y" }}
+          </h5>
+
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Виконано (%)</label>
+              {{ form.percent }}
+            </div>
+
+            <div class="col-md-8">
+              <label class="form-label fw-bold">Коментар</label>
+              {{ form.comment }}
+            </div>
+          </div>
+
+          <!-- Позиції, які неможливо виконати -->
+          <div class="mt-3">
+            <label class="form-label fw-bold">
+              Позиції, які неможливо виконати
+            </label>
+            <small class="text-muted d-block mb-2">
+              Можна обрати кілька позицій. На смартфоні просто тикайте по назві.
+            </small>
+
+            {% if order_items_for_selection %}
+              <div class="row">
+                {% for it in order_items_for_selection %}
+                  <div class="col-12 col-md-6 mb-1">
+                    <div class="form-check">
+                      <input class="form-check-input"
+                             type="checkbox"
+                             name="problem_items"
+                             value="{{ it.id }}"
+                             id="problem_item_{{ it.id }}">
+                      <label class="form-check-label w-100"
+                             for="problem_item_{{ it.id }}">
+                        {{ it.name }}
+                      </label>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="text-muted">У цього замовлення ще немає позицій.</p>
+            {% endif %}
+          </div>
+
+          <div class="text-end mt-3">
+            <button type="submit" class="btn btn-success">
+              💾 Зберегти
+            </button>
+          </div>
+        </div>
+      </div>
+    </form>
+    {% else %}
+      <p class="text-muted">
+        Спочатку оберіть замовлення вище, щоб ввести прогрес та позначити проблемні позиції.
+      </p>
+    {% endif %}
+  </div>
+
+  <h4 class="fw-bold mb-3">🕒 Останні оновлення</h4>
+  <table class="table table-striped align-middle shadow-sm">
+    <thead class="table-primary">
+      <tr>
+        <th>Дата</th>
+        <th>Замовлення</th>
+        <th>Виконано (%)</th>
+        <th>Проблемні позиції</th>
+        <th>Коментар</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in latest_progress %}
+      <tr>
+        <td>{{ p.date|date:"d.m.Y" }}</td>
+        <td>№{{ p.order.order_number }}</td>
+        <td>{{ p.percent }}%</td>
+        <td>
+          {% with items=p.problem_items.all %}
+            {% if items %}
+              {% for it in items %}
+                <span class="badge bg-danger-subtle text-danger border border-danger-subtle mb-1">
+                  {{ it.name }}
+                </span><br>
+              {% endfor %}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          {% endwith %}
+        </td>
+        <td>{{ p.comment }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+

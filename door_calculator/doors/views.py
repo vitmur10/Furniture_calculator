@@ -1,0 +1,1444 @@
+import json
+import os
+from datetime import datetime, timedelta, date
+from decimal import Decimal, ROUND_HALF_UP
+from io import BytesIO
+from django.views.decorators.http import require_POST
+from django.conf import settings
+from django.contrib import messages
+from django.db import models
+from django.db.models import Avg, Sum, Q
+from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest
+from django.shortcuts import render, redirect, get_object_or_404
+from django.views.decorators.csrf import csrf_exempt
+from openpyxl import Workbook
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas
+from reportlab.platypus import Table, TableStyle
+
+from .forms import OrderProgressForm
+from .models import (
+    Category, Product, Addition, Coefficient, Rate,
+    Order, OrderItem, AdditionItem, WorkLog, Worker,
+    OrderProgress, ItemProgress, OrderImage, CompanyInfo, OrderFile, Customer, OrderImageMarker,
+)
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.http import HttpResponseForbidden
+
+
+def superuser_only(view_func):
+    @login_required
+    @user_passes_test(lambda u: u.is_superuser)
+    def _wrapped(request, *args, **kwargs):
+        return view_func(request, *args, **kwargs)
+
+    return _wrapped
+
+
+def _get_applicable_coefficients(products_qs):
+    """
+    Коefs: глобальні або прив'язані до категорій/конкретних продуктів.
+    """
+    prod_ids = list(products_qs.values_list("id", flat=True))
+    cat_ids = list(products_qs.values_list("category_id", flat=True))
+    return (Coefficient.objects.filter(
+        Q(applies_globally=True) |
+        Q(products__in=prod_ids) |
+        Q(categories__in=cat_ids)
+    )
+            .distinct()
+            .order_by("name"))
+
+
+def _get_applicable_additions(products_qs):
+    """
+    Additions: глобальні або прив'язані до категорій/конкретних продуктів.
+    """
+    prod_ids = list(products_qs.values_list("id", flat=True))
+    cat_ids = list(products_qs.values_list("category_id", flat=True))
+    return (Addition.objects.filter(
+        Q(applies_globally=True) |
+        Q(products__in=prod_ids) |
+        Q(categories__in=cat_ids)
+    )
+            .distinct()
+            .order_by("name"))
+
+
+def _recalc_order_totals(order: Order):
+    total_ks_all = Decimal("0")
+    total_cost_all = Decimal("0")
+    for i in order.items.all():
+        ks, _ = i.total_ks()
+        total_ks_all += Decimal(str(ks))
+        total_cost_all += Decimal(str(i.total_cost()))
+    order.total_ks = total_ks_all
+    order.total_cost = total_cost_all
+    order.save(update_fields=["total_ks", "total_cost"])
+
+
+def order_list(request):
+    orders = Order.objects.all().order_by("-created_at")
+    return render(request, "doors/order_list.html", {"orders": orders})
+
+
+@csrf_exempt
+def update_status(request, order_id):
+    order = get_object_or_404(Order, id=order_id)
+    data = json.loads(request.body.decode("utf-8"))
+
+    # Зміна статусу
+    order.status = data.get("status", order.status)
+
+    # Зміна відсотка виконання
+    progress = int(data.get("progress", order.completion_percent))
+    order.completion_percent = progress
+    order.save()
+
+    # Зберігаємо у історію
+    OrderProgress.objects.create(
+        order=order,
+        date=date.today(),
+        percent=progress,
+        comment=data.get("comment", "")
+    )
+
+    return JsonResponse({"success": True})
+
+
+@require_POST
+def delete_order(request, order_id):
+    order = get_object_or_404(Order, id=order_id)
+    order.delete()
+
+    # Якщо викликали через fetch (AJAX) — повернемо JSON
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return JsonResponse({"success": True})
+
+    # Якщо раптом звичайний POST — редірект на список
+    return redirect("order_list")
+
+
+def home(request):
+    if request.method == "POST":
+        order_number = request.POST.get("order_number")
+        main_sketch = request.FILES.get("sketch")
+        extra_images = request.FILES.getlist("images")  # ← до 50 фото
+
+        if not order_number:
+            messages.error(request, "Введіть номер замовлення")
+            return redirect("home")
+
+        # створюємо замовлення
+        order = Order.objects.create(order_number=order_number)
+
+        # зберігаємо ГОЛОВНЕ фото
+        if main_sketch:
+            order.sketch = main_sketch
+            order.save()
+
+        # зберігаємо додаткові фото
+        if extra_images:
+            for img in extra_images[:50]:
+                OrderImage.objects.create(order=order, image=img)
+
+        return redirect("calculate_order", order_id=order.id)
+
+    return render(request, "doors/home.html")
+
+
+ITEM_COLOR_PALETTE = [
+    "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4",
+    "#46f0f0", "#f032e6", "#bcf60c", "#fabebe", "#008080", "#e6beff",
+    "#9a6324", "#fffac8", "#800000", "#aaffc3", "#808000", "#ffd8b1",
+    "#000075", "#808080", "#000000", "#ffe4e1", "#ff1493", "#7fffd4",
+    "#dc143c", "#00ced1", "#daa520", "#9932cc", "#00fa9a", "#f4a460",
+    "#8b4513", "#2e8b57", "#ff4500", "#1e90ff", "#ff6347", "#32cd32",
+    "#6495ed", "#ff00ff", "#b0c4de", "#8a2be2", "#7b68ee", "#20b2aa",
+    "#ff69b4", "#cd5c5c", "#b22222", "#ff8c00", "#adff2f", "#40e0d0",
+    "#ba55d3", "#5f9ea0", "#ffdab9", "#dda0dd", "#afeeee", "#deb887",
+    "#ffb6c1", "#556b2f", "#4682b4", "#008b8b", "#7cfc00", "#fa8072",
+    "#d2691e", "#00bfff", "#8fbc8f", "#da70d6", "#ffdead", "#bc8f8f",
+    "#a52a2a", "#2f4f4f", "#8b008b", "#708090", "#c0c0c0", "#ffd700",
+    "#00ff7f", "#7fffd4", "#ff7f50", "#dc143c", "#228b22", "#8a2be2",
+    "#ff1493", "#00ff00", "#ff00ff", "#00ffff", "#ff4500", "#4169e1",
+    "#ff8c00", "#90ee90", "#ff69b4", "#7b68ee", "#00fa9a", "#ffc0cb",
+    "#ee82ee", "#7fff00", "#6a5acd", "#00bcd4", "#ff5722", "#4caf50"
+]
+
+
+def get_item_color(item_id: int | None) -> str:
+    if not item_id:
+        return "#ff4d4f"
+    idx = (int(item_id) - 1) % len(ITEM_COLOR_PALETTE)
+    return ITEM_COLOR_PALETTE[idx]
+
+
+def calculate_order(request, order_id):
+    """
+    Сторінка розрахунку замовлення:
+    - додавання позицій
+    - завантаження фото
+    - завантаження/редагування/видалення додаткових файлів
+    - прив'язка замовника (новий або існуючий)
+    - вивід міток на фото (OrderImageMarker) на сторінці розрахунку
+    - формула з підставленими значеннями
+    - кольори для позицій/міток (до 100+)
+    """
+    order = get_object_or_404(Order, id=order_id)
+
+    # 🔹 Категорії + список виробів (для плоского списку)
+    categories = Category.objects.prefetch_related("products").all()
+    products = Product.objects.all().select_related("category")
+
+    # 🔹 Усі фото замовлення (для галереї та міток)
+    images = order.images.all()
+
+    # 🔹 Базова ціна за 1 к/с
+    rate_obj = Rate.objects.first()
+    price_per_ks = Decimal(str(rate_obj.price_per_ks)) if rate_obj else Decimal("0")
+
+    # ============================================================
+    # helpers: кольори
+    # ============================================================
+    def _hsl_to_hex(h, s, l):
+        # h: 0..360, s/l: 0..1
+        import colorsys
+        r, g, b = colorsys.hls_to_rgb(h / 360.0, l, s)
+        return "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
+
+    def get_item_color(item_id: int) -> str:
+        """
+        Стабільний, "рознесений" колір по id.
+        Golden angle + високий saturation + 2 рівні lightness, щоб не зливалося.
+        """
+        if not item_id:
+            return "#ff4d4f"
+
+        # golden angle (≈137.508°) добре "розносить" відтінки
+        hue = (item_id * 137.508) % 360
+
+        # уникаємо надто світлих/темних та "сірих"
+        sat = 0.80  # насиченість
+        # чергуємо яскравість, щоб сусідні відтінки відрізнялись сильніше
+        light = 0.48 if (item_id % 2 == 0) else 0.62
+
+        return _hsl_to_hex(hue, sat, light)
+
+    # ============================================================
+    # 1) POST (кілька форм на одній сторінці)
+    # ============================================================
+
+    # 1.1 Завантаження фото (до 50)
+    if request.method == "POST" and "upload_images" in request.POST:
+        files = request.FILES.getlist("images")
+        for f in files[:50]:
+            OrderImage.objects.create(order=order, image=f)
+        return redirect("calculate_order", order_id=order.id)
+
+    # 1.2 Завантаження додаткових файлів
+    if request.method == "POST" and "upload_files" in request.POST:
+        files = request.FILES.getlist("files")
+        base_desc = (request.POST.get("files_desc") or "").strip()
+
+        for idx, f in enumerate(files[:50], start=1):
+            if base_desc:
+                desc = base_desc if len(files) == 1 else f"{base_desc} ({idx})"
+            else:
+                desc = f.name
+            OrderFile.objects.create(order=order, file=f, description=desc)
+
+        return redirect("calculate_order", order_id=order.id)
+
+    # 1.3 Оновлення підпису до файлу
+    if request.method == "POST" and "update_file" in request.POST:
+        file_id = request.POST.get("update_file")
+        new_desc = (request.POST.get("file_desc") or "").strip()
+        of = OrderFile.objects.filter(order=order, id=file_id).first()
+        if of:
+            of.description = new_desc or of.file.name
+            of.save()
+        return redirect("calculate_order", order_id=order.id)
+
+    # 1.4 Видалення файлу
+    if request.method == "POST" and "delete_file" in request.POST:
+        file_id = request.POST.get("delete_file")
+        OrderFile.objects.filter(order=order, id=file_id).delete()
+        return redirect("calculate_order", order_id=order.id)
+
+    # 1.5 Прив'язка / створення замовника
+    if request.method == "POST" and "assign_customer" in request.POST:
+        existing_id = request.POST.get("existing_customer") or ""
+        customer = None
+
+        if existing_id:
+            customer = Customer.objects.filter(id=existing_id).first()
+        else:
+            cust_type = request.POST.get("customer_type") or "person"
+            name = (request.POST.get("customer_name") or "").strip()
+            phone = (request.POST.get("customer_phone") or "").strip()
+            email = (request.POST.get("customer_email") or "").strip()
+            address = (request.POST.get("customer_address") or "").strip()
+            company_code = (request.POST.get("customer_company_code") or "").strip()
+
+            if name:
+                customer = Customer.objects.create(
+                    type=cust_type,
+                    name=name,
+                    phone=phone or None,
+                    email=email or None,
+                    address=address or None,
+                    company_code=company_code or None,
+                )
+
+        if customer:
+            order.customer = customer
+            order.save()
+
+        return redirect("calculate_order", order_id=order.id)
+
+    # 1.6 Додавання позиції (основна форма)
+    if request.method == "POST":
+        # щоб не зачепити інші форми
+        if (
+                "upload_images" not in request.POST
+                and "upload_files" not in request.POST
+                and "update_file" not in request.POST
+                and "delete_file" not in request.POST
+                and "assign_customer" not in request.POST
+        ):
+            name = request.POST.get("name") or "Позиція"
+            item_qty = max(1, int(request.POST.get("item_qty", 1)))
+
+            selected_products = request.POST.getlist("products")
+            selected_adds = request.POST.getlist("additions")
+            selected_coefs = request.POST.getlist("coefficients")
+
+            item = OrderItem.objects.create(order=order, name=name, quantity=item_qty)
+
+            if selected_products:
+                item.products.set(selected_products)
+
+            if selected_coefs:
+                item.coefficients.set(selected_coefs)
+
+            # доповнення з кількістю — через AdditionItem
+            for add_id in selected_adds:
+                qty_field = f"add_qty_{add_id}"
+                qty = max(1, int(request.POST.get(qty_field, 1)))
+                AdditionItem.objects.create(order_item=item, addition_id=add_id, quantity=qty)
+
+            # перерахунок totals (твоя існуюча функція)
+            _recalc_order_totals(order)
+
+            return redirect("calculate_order", order_id=order.id)
+
+    # ============================================================
+    # 2) GET: підготовка даних для відображення
+    # ============================================================
+
+    items = order.items.all()
+
+    # ✅ надійна сума грошей: по факту методу total_cost()
+    if items:
+        total_sum = sum(Decimal(str(i.total_cost())) for i in items)
+        total_sum = total_sum.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    else:
+        total_sum = Decimal("0.00")
+
+    # ✅ формула: Σ (base_ks * coeff) × rate
+    effective_ks = Decimal("0.00")
+    formula_terms = []  # список значень effective_ks кожної позиції
+
+    for it in items:
+        # колір позиції (щоб потім використовувати і в мітках/лейблах)
+        it.color_hex = get_item_color(it.id)
+
+        ks_raw = it.total_ks() if callable(getattr(it, "total_ks", None)) else None
+
+        base_ks = Decimal("0")
+        coeff = Decimal("1")
+
+        # ВАЖЛИВО: у тебе total_ks() повертає (base_ks, coeff_multiplier),
+        # бо в шаблоні показується: "base × coeff"
+        if isinstance(ks_raw, (tuple, list)) and len(ks_raw) >= 2:
+            base_ks = Decimal(str(ks_raw[0] or 0))
+            coeff = Decimal(str(ks_raw[1] or 1))
+        elif ks_raw is not None:
+            base_ks = Decimal(str(ks_raw or 0))
+            coeff = Decimal("1")
+
+        ks_effective = (base_ks * coeff).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        effective_ks += ks_effective
+        formula_terms.append(f"{ks_effective:.2f}")
+
+    effective_ks = effective_ks.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    formula_expression = " + ".join(formula_terms) if formula_terms else "0.00"
+
+    # дефолтні коефіцієнти й доповнення (глобальні)
+    default_coeffs = Coefficient.objects.filter(applies_globally=True).order_by("name")
+    default_addons = Addition.objects.filter(applies_globally=True).order_by("name")
+
+    customers = Customer.objects.all().order_by("-created_at")
+
+    # 🟢 Мітки по кожному зображенню — з кольором (або збережений у мітці, або колір позиції)
+    markers_by_image = {}
+    for img in images:
+        markers_qs = (
+            OrderImageMarker.objects.filter(image=img)
+            .select_related("item")
+            .order_by("id")
+        )
+
+        markers_by_image[img.id] = [
+            {
+                "x": m.x,  # 0..100
+                "y": m.y,
+                "item_name": m.item.name if m.item else "",
+                "color": (m.color or (get_item_color(m.item_id) if m.item_id else "#ff4d4f")),
+            }
+            for m in markers_qs
+        ]
+
+    context = {
+        "order": order,
+        "categories": categories,
+        "products": products,
+        "coefficients": default_coeffs,
+        "addons": default_addons,
+        "rate": price_per_ks,
+        "items": items,
+        "total": total_sum,
+        "customers": customers,
+        "markers_by_image": markers_by_image,
+
+        # 🔥 для блоку формули
+        "effective_ks": effective_ks,
+        "formula_expression": formula_expression,
+    }
+    return render(request, "doors/calculate_order.html", context)
+
+
+def _draw_common_header(p, width, height, company, base_font):
+    """
+    Спільна шапка: логотип + реквізити.
+    """
+    y_top = height - 20 * mm
+
+    # Логотип: спершу з CompanyInfo.logo, якщо нема — пробуємо старий статичний
+    logo_drawn = False
+    if company and company.logo:
+        try:
+            logo = ImageReader(company.logo.path)
+            p.drawImage(
+                logo,
+                20 * mm,
+                y_top - 20 * mm,
+                width=40 * mm,
+                height=20 * mm,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+            logo_drawn = True
+        except Exception:
+            pass
+
+    if not logo_drawn:
+        logo_path = os.path.join(settings.BASE_DIR, "doors", "static", "doors", "logo.png")
+        if os.path.exists(logo_path):
+            p.drawImage(
+                logo_path,
+                20 * mm,
+                y_top - 20 * mm,
+                width=40 * mm,
+                height=20 * mm,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+
+    # Реквізити справа
+    p.setFont(base_font, 9)
+    x_info = width - 20 * mm
+    text = p.beginText()
+    text.setTextOrigin(x_info, y_top)
+    text.setFont(base_font, 10)
+
+    if company:
+        text.textLine(company.name)
+        text.setFont(base_font, 9)
+        if company.address:
+            text.textLine(company.address)
+        if company.phone:
+            text.textLine(f"Тел.: {company.phone}")
+        if company.email:
+            text.textLine(f"Email: {company.email}")
+        if company.website:
+            text.textLine(f"Сайт: {company.website}")
+        if company.iban:
+            text.textLine(f"IBAN: {company.iban}")
+        if company.edrpou:
+            text.textLine(f"ЄДРПОУ: {company.edrpou}")
+    p.drawText(text)
+
+
+def _draw_variant_1(p, width, height, base_font, order, final_total):
+    """
+    Варіант 1: простий блок з фінальною вартістю.
+    """
+    y_start = height - 45 * mm  # трохи нижче шапки
+
+    # Заголовок
+    p.setFont(base_font, 14)
+    title = f"Фінальний документ замовлення №{order.order_number}"
+    p.drawString(30 * mm, y_start, title)
+
+    p.setFont(base_font, 11)
+    p.drawString(30 * mm, y_start - 8 * mm, f"Дата: {order.created_at.strftime('%d.%m.%Y')}")
+
+    # Блок з ціною
+    y_box_top = y_start - 25 * mm
+    box_x1 = 30 * mm
+    box_x2 = width - 30 * mm
+    box_y1 = y_box_top
+    box_y2 = y_box_top - 30 * mm
+
+    p.setLineWidth(1)
+    p.rect(box_x1, box_y2, box_x2 - box_x1, box_y1 - box_y2)
+
+    p.setFont(base_font, 11)
+    p.drawCentredString(width / 2, box_y1 - 7 * mm, "Фінальна вартість замовлення")
+
+    p.setFont(base_font, 20)
+    p.drawCentredString(width / 2, box_y1 - 18 * mm, f"{final_total:.2f} грн")
+
+    # Маленька нотатка
+    p.setFont(base_font, 8)
+    p.drawString(
+        30 * mm,
+        box_y2 - 10 * mm,
+        "Сума вказана з урахуванням узгодженої націнки та додаткових витрат (доставка, пакування тощо).",
+    )
+
+
+def _draw_variant_2(p, width, height, base_font, order, final_total):
+    """
+    Варіант 2: більш «комерційна пропозиція» з плашкою.
+    """
+    y_start = height - 45 * mm
+
+    # Заголовок
+    p.setFont(base_font, 16)
+    title = f"Комерційна пропозиція №{order.order_number}"
+    p.drawCentredString(width / 2, y_start, title)
+
+    p.setFont(base_font, 11)
+    p.drawCentredString(
+        width / 2,
+        y_start - 7 * mm,
+        f"Дата: {order.created_at.strftime('%d.%m.%Y')}",
+    )
+
+    # Плашка з фінальною вартістю
+    y_box_top = y_start - 25 * mm
+    box_x1 = 35 * mm
+    box_x2 = width - 35 * mm
+    box_y1 = y_box_top
+    box_y2 = y_box_top - 35 * mm
+
+    p.setLineWidth(1.2)
+    p.roundRect(box_x1, box_y2, box_x2 - box_x1, box_y1 - box_y2, 4 * mm)
+
+    p.setFont(base_font, 10)
+    p.drawCentredString(width / 2, box_y1 - 8 * mm, "Підсумкова вартість пропозиції")
+
+    p.setFont(base_font, 22)
+    p.drawCentredString(width / 2, box_y1 - 20 * mm, f"{final_total:.2f} грн")
+
+    # Нотатка знизу
+    p.setFont(base_font, 8)
+    p.drawString(
+        30 * mm,
+        box_y2 - 10 * mm,
+        "Дана комерційна пропозиція носить інформаційний характер. "
+        "Умови оплати та поставки уточнюються з менеджером.",
+    )
+
+
+def generate_pdf(request, order_id):
+    """
+    Генерація PDF по замовленню.
+
+    Режими:
+      - детальний (за замовчуванням) — таблиця з позиціями + окрема таблиця додаткових послуг
+      - спрощений (?simple=1) — без основної таблиці, лише таблиця додаткових послуг (якщо є) + підсумки
+
+    Параметри GET:
+      ?markup=10     — націнка, % (застосовується до позицій, але не відображається окремо)
+      ?delivery=300  — доставка, грн (йде у таблицю додаткових послуг)
+      ?packing=200   — пакування, грн (так само)
+      ?simple=1      — спрощений варіант
+    """
+    order = Order.objects.get(id=order_id)
+    items = OrderItem.objects.filter(order=order)
+    company = CompanyInfo.objects.first()
+
+    # ---------- helpers ----------
+    def to_decimal(v, default="0"):
+        if v in (None, ""):
+            return Decimal(default)
+        try:
+            return Decimal(str(v))
+        except Exception:
+            return Decimal(default)
+
+    # ---------- GET params ----------
+    markup_percent = to_decimal(request.GET.get("markup"), "0")
+    delivery = to_decimal(request.GET.get("delivery"), "0")
+    packing = to_decimal(request.GET.get("packing"), "0")
+    simple_mode = request.GET.get("simple") == "1"
+
+    # множник для націнки
+    if markup_percent > 0:
+        markup_factor = (Decimal("100") + markup_percent) / Decimal("100")
+    else:
+        markup_factor = Decimal("1.0")
+
+    # ---------- базова сума (без націнки) ----------
+    base_without_markup = Decimal("0")
+    item_costs = []
+    for it in items:
+        raw = it.total_cost() if callable(it.total_cost) else it.total_cost
+        raw_dec = to_decimal(raw, "0")
+        item_costs.append((it, raw_dec))
+        base_without_markup += raw_dec
+
+    # базова сума з націнкою (це те, що показуємо як "Базова вартість")
+    base_with_markup = (base_without_markup * markup_factor).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+    # фінальна сума = базова (з націнкою) + доставка + пакування
+    final_total = (base_with_markup + delivery + packing).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+    # ---------- старт PDF ----------
+    buffer = BytesIO()
+    p = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    # ---------- шрифт ----------
+    font_path = os.path.join(
+        settings.BASE_DIR, "doors", "static", "fonts", "DejaVuSerif.ttf"
+    )
+    if os.path.exists(font_path):
+        pdfmetrics.registerFont(TTFont("DejaVuSerif", font_path))
+        base_font = "DejaVuSerif"
+    else:
+        base_font = "Helvetica"
+
+    p.setFont(base_font, 12)
+
+    # ---------- шапка ----------
+    if company and company.logo:
+        try:
+            logo = ImageReader(company.logo.path)
+            p.drawImage(
+                logo,
+                40,
+                height - 140,
+                width=160,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        except Exception:
+            pass
+
+    x_right = width - 40
+    p.setFont(base_font, 12)
+    if company:
+        p.drawRightString(x_right, height - 60, company.name)
+        p.setFont(base_font, 10)
+        if company.address:
+            p.drawRightString(x_right, height - 80, company.address)
+        if company.phone:
+            p.drawRightString(x_right, height - 100, f"Тел.: {company.phone}")
+        if company.email:
+            p.drawRightString(x_right, height - 120, f"Email: {company.email}")
+        if company.edrpou:
+            p.drawRightString(x_right, height - 140, f"ЄДРПОУ: {company.edrpou}")
+        if company.iban:
+            p.drawRightString(x_right, height - 160, f"IBAN: {company.iban}")
+
+    # ---------- заголовок ----------
+    title_y = height - 155
+
+    p.setFont(base_font, 15)
+    title = "Комерційна пропозиція" if simple_mode else "Фінальний документ замовлення"
+    p.drawString(40, title_y, title)
+
+    p.setFont(base_font, 11)
+    p.drawString(40, title_y - 20, f"Замовлення №: {order.order_number}")
+    p.drawString(40, title_y - 38, f"Дата: {order.created_at.strftime('%d.%m.%Y')}")
+    # 🔥 вставляємо імʼя клієнта
+    if hasattr(order, "customer") and order.customer:
+        p.drawString(40, title_y - 56, f"Замовник: {order.customer.name}")
+    else:
+        p.drawString(40, title_y - 56, "Замовник: ____________________")
+
+    # верхній рівень для вмісту
+    content_top_y = title_y - 80
+    current_y = content_top_y
+
+    # ---------- ОСНОВНА ТАБЛИЦЯ (лише для детального) ----------
+    if not simple_mode and item_costs:
+        main_data = [["№", "Позиція", "Кількість", "Вартість за одиницю, грн", "Сума, грн"]]
+
+        for idx, (it, raw_dec) in enumerate(item_costs, start=1):
+            total_with_markup = (raw_dec * markup_factor).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            qty = getattr(it, "quantity", 1) or 1
+            qty_dec = Decimal(str(qty))
+            unit_cost = (
+                (total_with_markup / qty_dec).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                if qty_dec > 0
+                else Decimal("0.00")
+            )
+
+            main_data.append(
+                [
+                    idx,
+                    it.name,
+                    str(qty),
+                    f"{unit_cost:.2f}",
+                    f"{total_with_markup:.2f}",
+                ]
+            )
+
+        main_table = Table(main_data, colWidths=[30, 230, 70, 130, 80])
+        main_table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+                    ("FONTNAME", (0, 0), (-1, -1), base_font),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.white),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+                ]
+            )
+        )
+
+        _, main_h = main_table.wrap(0, 0)
+        main_y = current_y - main_h
+        if main_y < 60:
+            main_y = 60
+        main_table.drawOn(p, 40, main_y)
+        current_y = main_y - 30  # нижче таблиці
+
+    # ---------- ОКРЕМА ТАБЛИЦЯ ДОДАТКОВИХ ПОСЛУГ (для обох режимів) ----------
+    extras_rows = []
+    if delivery > 0:
+        extras_rows.append(("Доставка", delivery))
+    if packing > 0:
+        extras_rows.append(("Пакування", packing))
+
+    if extras_rows:
+        extras_data = [["№", "Додаткові послуги", "Кількість", "Вартість за одиницю, грн", "Сума, грн"]]
+        for idx, (name, value) in enumerate(extras_rows, start=1):
+            val_str = f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
+            extras_data.append(
+                [
+                    idx,
+                    name,
+                    "1",
+                    val_str,
+                    val_str,
+                ]
+            )
+
+        extras_table = Table(extras_data, colWidths=[30, 230, 70, 130, 80])
+        extras_table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+                    ("FONTNAME", (0, 0), (-1, -1), base_font),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.white),
+                    ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+                ]
+            )
+        )
+
+        _, extras_h = extras_table.wrap(0, 0)
+        extras_y = current_y - extras_h
+        if extras_y < 60:
+            extras_y = 60
+        extras_table.drawOn(p, 40, extras_y)
+        current_y = extras_y - 30
+    # якщо додаткових нема — current_y лишається після основної таблиці або після header-а
+
+    # ---------- ПІДСУМКИ ----------
+    y_summary = current_y
+    p.setFont(base_font, 12)
+    # базова вартість (з націнкою, без розпису)
+    p.drawString(40, y_summary, f"Базова вартість: {base_with_markup:.2f} грн")
+
+    p.setFont(base_font, 14)
+    p.drawString(
+        40,
+        y_summary - 25,
+        f"Фінальна сума до оплати: {final_total:.2f} грн",
+    )
+
+    # ---------- БЛОК УМОВ ----------
+    disclaimer_y = y_summary - 60
+    text = p.beginText()
+    text.setTextOrigin(40, disclaimer_y)
+    text.setFont(base_font, 9)
+    text.setLeading(12)
+
+    text_lines = [
+        "Орієнтовний термін виготовлення __________ робочих днів.",
+        "Дата початку робіт призначається за наявності матеріалу та",
+        "проєкту на виготовлення замовлення.",
+        "Якщо в процесі перевірки креслення виявиться, що не повністю",
+        "розкритий обсяг робіт, невраховані роботи додатково збільшать",
+        "вартість проєкту.",
+        "Креслення / посилання: _________________________________",
+    ]
+
+    for line in text_lines:
+        text.textLine(line)
+
+    p.drawText(text)
+
+    # ---------- завершення ----------
+    p.showPage()
+    p.save()
+
+    buffer.seek(0)
+    response = HttpResponse(buffer, content_type="application/pdf")
+    filename = f"order_{order.order_number}.pdf"
+    response["Content-Disposition"] = f'inline; filename=\"{filename}\"'
+    return response
+
+
+def worklog_list(request):
+    # Отримуємо всі записи
+    logs = WorkLog.objects.select_related("worker", "order").order_by("-date")
+    workers = Worker.objects.all()
+    orders = Order.objects.all()
+
+    # Отримуємо параметри фільтрів
+    worker_id = request.GET.get("worker")
+    order_id = request.GET.get("order")
+    start_date = request.GET.get("start_date")
+    end_date = request.GET.get("end_date")
+
+    # Фільтрація
+    if worker_id:
+        logs = logs.filter(worker_id=worker_id)
+    if order_id:
+        logs = logs.filter(order_id=order_id)
+    if start_date:
+        logs = logs.filter(date__gte=start_date)
+    if end_date:
+        logs = logs.filter(date__lte=end_date)
+
+    # Підсумки годин по кожному працівнику
+    totals = (
+        logs.values("worker__name", "worker__position")
+        .annotate(total_hours=Sum("hours"))
+        .order_by("worker__name")
+    )
+
+    return render(request, "doors/worklog_list.html", {
+        "logs": logs,
+        "totals": totals,
+        "workers": workers,
+        "orders": orders,
+        "selected_worker": worker_id,
+        "selected_order": order_id,
+        "start_date": start_date,
+        "end_date": end_date,
+    })
+
+
+def report_view(request):
+    start_date_raw = request.GET.get("start_date")
+    end_date_raw = request.GET.get("end_date")
+    export = request.GET.get("export")
+
+    # Парсимо дати
+    start_date = None
+    end_date = None
+    try:
+        if start_date_raw:
+            start_date = datetime.strptime(start_date_raw, "%Y-%m-%d").date()
+        if end_date_raw:
+            end_date = datetime.strptime(end_date_raw, "%Y-%m-%d").date()
+    except ValueError:
+        start_date = None
+        end_date = None
+
+    orders = Order.objects.all().order_by("-created_at")
+
+    # Фільтрація по даті створення замовлення
+    if start_date:
+        orders = orders.filter(created_at__date__gte=start_date)
+    if end_date:
+        orders = orders.filter(created_at__date__lte=end_date)
+
+    # Розрахунок % виконання на дату (end_date або зараз) по OrderProgress
+    calc_date = end_date or date.today()
+    for order in orders:
+        op = (
+            OrderProgress.objects
+            .filter(order=order, date__lte=calc_date)
+            .order_by("-date")
+            .first()
+        )
+        if op:
+            order.calculated_progress = float(op.percent)
+        else:
+            order.calculated_progress = float(order.completion_percent or 0)
+
+    # Поділ на активні/відкладені
+    active_orders = [o for o in orders if o.status != "postponed"]
+    postponed_orders = [o for o in orders if o.status == "postponed"]
+
+    # Загальна вартість по активним
+    total_value = (
+            Order.objects
+            .filter(id__in=[o.id for o in active_orders])
+            .aggregate(Sum("total_cost"))["total_cost__sum"]
+            or Decimal("0")
+    )
+
+    # Середній % виконання по активним
+    if active_orders:
+        avg_progress = sum(o.calculated_progress for o in active_orders) / len(active_orders)
+    else:
+        avg_progress = 0
+
+    # Експорт в Excel
+    if export == "excel":
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Звіт по замовленнях"
+        ws.append(["№", "Номер", "Статус", "Вартість (грн)", "К/С", "Виконано (%)", "Дата"])
+
+        for idx, order in enumerate(orders, start=1):
+            ws.append([
+                idx,
+                order.order_number,
+                order.get_status_display(),
+                float(order.total_cost or 0),
+                float(order.total_ks or 0),
+                round(order.calculated_progress, 1),
+                order.created_at.strftime("%d.%m.%Y"),
+            ])
+
+        ws.append([])
+        ws.append([
+            "",
+            "Разом:",
+            "",
+            float(total_value),
+            "",
+            f"{avg_progress:.1f}%",
+            "",
+        ])
+
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="report_{datetime.now().strftime("%Y%m%d")}.xlsx"'
+        wb.save(response)
+        return response
+
+    return render(request, "doors/report.html", {
+        "orders": orders,
+        "start_date": start_date,
+        "end_date": end_date,
+        "total_value": total_value,
+        "avg_progress": avg_progress,
+        "active_orders": active_orders,
+        "postponed_orders": postponed_orders,
+    })
+
+
+def report_period_view(request):
+    start_date_raw = request.GET.get("start_date")
+    end_date_raw = request.GET.get("end_date")
+
+    # Якщо дати не вибрані — останні 7 днів
+    if not start_date_raw or not end_date_raw:
+        end_date = datetime.today().date()
+        start_date = end_date - timedelta(days=7)
+    else:
+        start_date = datetime.strptime(start_date_raw, "%Y-%m-%d").date()
+        end_date = datetime.strptime(end_date_raw, "%Y-%m-%d").date()
+
+    # Години працівників
+    logs = (
+        WorkLog.objects
+        .select_related("worker", "order")
+        .filter(date__range=[start_date, end_date])
+    )
+
+    # Всі записи OrderProgress за період
+    progress_qs = (
+        OrderProgress.objects
+        .select_related("order")
+        .filter(date__range=[start_date, end_date])
+    )
+
+    # ----- СПИСОК ЗАМОВЛЕНЬ (БЕЗ ДУБЛІВ) -----
+    order_ids = progress_qs.values_list("order_id", flat=True).distinct()
+    orders_qs = Order.objects.filter(id__in=order_ids).order_by("order_number")
+    orders = [o.order_number for o in orders_qs]
+
+    # ----- СПИСОК ПРАЦІВНИКІВ -----
+    workers = list(
+        logs
+        .values_list("worker__name", flat=True)
+        .distinct()
+    )
+
+    # ===== ТАБЛИЦЯ ПО ДНЯХ =====
+    table = []
+    totals_workers = {w: Decimal("0") for w in workers}
+    total_all = Decimal("0")
+
+    current_date = start_date
+    while current_date <= end_date:
+        row = {"date": current_date, "total": Decimal("0")}
+
+        # 🔹 % виконання по КОЖНОМУ ЗАМОВЛЕННЮ станом на current_date
+        for o_num in orders:
+            qs = OrderProgress.objects.filter(
+                order__order_number=o_num,
+                date__lte=current_date,
+            ).order_by("-date")
+            last = qs.first()
+            row[o_num] = float(last.percent) if last else 0.0
+
+        # 🔹 Години по працівниках на цю дату
+        for w in workers:
+            hours = (
+                    logs
+                    .filter(worker__name=w, date=current_date)
+                    .aggregate(total=Sum("hours"))["total"]
+                    or Decimal("0")
+            )
+            hours = Decimal(str(hours))
+            row[w] = hours
+            totals_workers[w] += hours
+            row["total"] += hours
+
+        total_all += row["total"]
+        table.append(row)
+        current_date += timedelta(days=1)
+
+    # ===== ПІДСУМКОВИЙ % ПО ЗАМОВЛЕННЯХ ЗА ПЕРІОД =====
+    calc_date = end_date or date.today()
+    totals_orders = {}
+    for o_num in orders:
+        qs = OrderProgress.objects.filter(
+            order__order_number=o_num,
+            date__lte=calc_date,
+        ).order_by("-date")
+        last = qs.first()
+        totals_orders[o_num] = float(last.percent) if last else 0.0
+
+    # ===== НОРМА ГОДИН =====
+    work_days = (end_date - start_date).days + 1
+    norm_hours = Decimal(work_days * 8) * Decimal("0.75")
+    percent_done = (total_all / norm_hours * Decimal("100")) if norm_hours > 0 else Decimal("0")
+
+    return render(
+        request,
+        "doors/report_period.html",
+        {
+            "start_date": start_date,
+            "end_date": end_date,
+            "orders": orders,
+            "workers": workers,
+            "table": table,
+            "totals_orders": totals_orders,
+            "totals_workers": totals_workers,
+            "total_all": total_all,
+            "work_days": work_days,
+            "norm_hours": norm_hours,
+            "percent_done": percent_done,
+        },
+    )
+
+
+def worklog_add(request):
+    if request.method == "POST":
+        worker_id = request.POST.get("worker")
+        hours = request.POST.get("hours")
+        comment = request.POST.get("comment", "")
+        date_str = request.POST.get("date")
+
+        # Перевірка дати
+        if not date_str:
+            date = datetime.today().date()
+        else:
+            try:
+                date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                return HttpResponseBadRequest("Некоректна дата")
+
+        # Перевірка чи вибрано працівника
+        if not worker_id:
+            return HttpResponseBadRequest("Оберіть працівника")
+
+        # Створення запису
+        WorkLog.objects.create(
+            worker_id=worker_id,
+            date=date,
+            hours=hours,
+            comment=comment,
+        )
+
+        return redirect("worklog_list")
+
+    # Якщо GET — показуємо форму
+    workers = Worker.objects.all()
+    today = datetime.today()
+    return render(request, "doors/worklog_add.html", {
+        "workers": workers,
+        "today": today,
+    })
+
+
+def order_history(request, order_id):
+    order = get_object_or_404(Order, id=order_id)
+    history = order.progress_logs.all()
+    return render(request, "doors/partials/order_history.html", {"history": history, "order": order})
+
+
+@csrf_exempt
+def update_completion(request, order_id):
+    """Оновлює відсоток виконання замовлення прямо зі списку."""
+    if request.method == "POST":
+        try:
+            data = json.loads(request.body)
+            percent = int(data.get("completion_percent", 0))
+            order = Order.objects.get(id=order_id)
+            order.completion_percent = max(0, min(100, percent))  # обмежуємо 0–100
+
+            # якщо 100% — автоматично завершено
+            if order.completion_percent == 100:
+                order.status = "completed"
+
+            order.save()
+            return JsonResponse({"success": True, "percent": order.completion_percent})
+        except Exception as e:
+            return JsonResponse({"success": False, "error": str(e)}, status=400)
+
+    return JsonResponse({"success": False, "error": "Invalid request"}, status=405)
+
+
+def add_item_progress(request):
+    """
+    Додаємо прогрес по замовленню +
+    позначаємо позиції, які неможливо виконати:
+      - обрані позиції отримують status="impossible"
+      - замовлення переходить у статус "postponed", якщо є хоча б одна така позиція
+    Працюємо тільки із замовленнями в статусі "В роботі".
+    """
+
+    # ✅ показуємо/оновлюємо тільки замовлення, які "В роботі"
+    WORK_STATUS = "in_progress"
+
+    order_id = request.GET.get("order") or request.POST.get("order_id")
+    selected_order = (
+        Order.objects.filter(id=order_id, status=WORK_STATUS).first()
+        if order_id
+        else None
+    )
+
+    if request.method == "POST":
+        if not selected_order:
+            messages.error(request, "Спочатку оберіть замовлення в статусі 'В роботі'.")
+            return redirect("item_progress_add")
+
+        form = OrderProgressForm(request.POST)
+        if form.is_valid():
+            progress = form.save(commit=False)
+            progress.order = selected_order
+            progress.save()
+
+            # 🔹 позиції, які неможливо виконати
+            problem_ids = request.POST.getlist("problem_items")
+            has_problems = False
+
+            if problem_ids:
+                items_qs = OrderItem.objects.filter(
+                    id__in=problem_ids,
+                    order=selected_order,
+                )
+                # зберігаємо зв'язок у M2M, якщо є
+                if hasattr(progress, "problem_items"):
+                    progress.problem_items.set(items_qs)
+
+                items_qs.update(status="impossible")
+                has_problems = items_qs.exists()
+
+            # 🔹 оновлюємо % у замовленні
+            selected_order.completion_percent = progress.percent
+            fields_to_update = ["completion_percent"]
+
+            # якщо є хоча б одна проблемна позиція — відкладаємо замовлення
+            if has_problems:
+                selected_order.status = "postponed"
+                fields_to_update.append("status")
+            else:
+                # немає проблем → якщо 100% — завершено
+                if progress.percent >= 100:
+                    selected_order.status = "completed"
+                    fields_to_update.append("status")
+
+            selected_order.save(update_fields=fields_to_update)
+
+            messages.success(
+                request,
+                f"Прогрес по замовленню №{selected_order.order_number} "
+                f"оновлено до {progress.percent}%."
+                + (" Замовлення відкладено через проблемні позиції." if has_problems else ""),
+            )
+            return redirect(f"{request.path}?order={selected_order.id}")
+    else:
+        form = OrderProgressForm()
+
+    # 🔹 позиції для чекбоксів (тільки по вибраному замовленню)
+    order_items_for_selection = (
+        selected_order.items.all() if selected_order else OrderItem.objects.none()
+    )
+
+    latest_progress = (
+        OrderProgress.objects
+        .select_related("order")
+        .order_by("-date")[:10]
+    )
+
+    # 🔹 у випадаючому списку — тільки замовлення "В роботі"
+    all_orders = (
+        Order.objects
+        .filter(status=WORK_STATUS)
+        .order_by("-created_at")
+    )
+
+    return render(
+        request,
+        "doors/item_progress_add.html",
+        {
+            "form": form,
+            "selected_order": selected_order,
+            "order_items_for_selection": order_items_for_selection,
+            "latest_progress": latest_progress,
+            "all_orders": all_orders,
+        },
+    )
+
+
+def options_for_products(request):
+    """
+    GET /options-for-products/?ids=1&ids=3&ids=5
+    Повертає лише ті доповнення/коефіцієнти, які підходять під вибрані продукти.
+    """
+    ids = request.GET.getlist("ids")
+    products_qs = Product.objects.filter(id__in=ids)
+
+    coeffs = _get_applicable_coefficients(products_qs)
+    adds = _get_applicable_additions(products_qs)
+
+    return JsonResponse({
+        "coefficients": [
+            {"id": c.id, "name": c.name, "value": c.value}
+            for c in coeffs
+        ],
+        "additions": [
+            {"id": a.id, "name": a.name, "ks_value": a.ks_value}
+            for a in adds
+        ],
+    })
+
+
+def order_item_edit(request, item_id):
+    item = get_object_or_404(OrderItem, id=item_id)
+    order = item.order
+
+    all_products = Product.objects.select_related("category").all()
+    all_additions = Addition.objects.all()
+    all_coeffs = Coefficient.objects.all()
+
+    if request.method == "POST":
+        # базові поля
+        item.name = request.POST.get("name") or item.name
+        try:
+            item.quantity = max(1, int(request.POST.get("quantity", item.quantity)))
+        except:
+            item.quantity = 1
+
+        # вироби
+        selected_products = request.POST.getlist("products")
+        item.products.set(selected_products or [])
+
+        # коефіцієнти
+        selected_coeffs = request.POST.getlist("coefficients")
+        item.coefficients.set(selected_coeffs or [])
+
+        # доповнення з кількостями
+        selected_adds = set(request.POST.getlist("additions"))
+        # існуючі AdditionItem по цій позиції
+        existing_map = {str(ai.addition_id): ai for ai in item.addition_items.all()}
+
+        # оновити / створити обрані
+        for add in all_additions:
+            add_id_str = str(add.id)
+            qty_field = f"add_qty_{add.id}"
+            if add_id_str in selected_adds:
+                try:
+                    qty = max(1, int(request.POST.get(qty_field, "1")))
+                except:
+                    qty = 1
+                if add_id_str in existing_map:
+                    ai = existing_map[add_id_str]
+                    ai.quantity = qty
+                    ai.save(update_fields=["quantity"])
+                else:
+                    AdditionItem.objects.create(order_item=item, addition=add, quantity=qty)
+            else:
+                # якщо не вибрано — видалити, якщо було
+                if add_id_str in existing_map:
+                    existing_map[add_id_str].delete()
+
+        item.save()
+        _recalc_order_totals(order)
+
+        messages.success(request, "Позицію успішно оновлено ✅")
+        return redirect("calculate_order", order_id=order.id)
+
+    # підготовка стану для форми
+    selected_products_ids = set(item.products.values_list("id", flat=True))
+    selected_coeffs_ids = set(item.coefficients.values_list("id", flat=True))
+    addition_qty = {ai.addition_id: ai.quantity for ai in item.addition_items.all()}
+
+    return render(request, "doors/order_item_edit.html", {
+        "order": order,
+        "item": item,
+        "products": all_products,
+        "coefficients": all_coeffs,
+        "addons": all_additions,
+        "selected_products_ids": selected_products_ids,
+        "selected_coeffs_ids": selected_coeffs_ids,
+        "addition_qty": addition_qty,
+    })
+
+
+def order_item_delete(request, item_id):
+    item = get_object_or_404(OrderItem, id=item_id)
+    order_id = item.order_id
+    item.delete()
+    # перерахунок після видалення
+    order = get_object_or_404(Order, id=order_id)
+    _recalc_order_totals(order)
+    messages.info(request, "Позицію видалено.")
+    return redirect("calculate_order", order_id=order_id)
+
+
+def annotate_order_image(request, image_id):
+    """
+    Сторінка розмітки конкретного фото замовлення:
+    - вибір позиції (OrderItem)
+    - клік по фото -> додається мітка
+    - вибір кольору для міток
+    - видалення окремих міток
+    - «скинути мітки» тільки для обраної позиції (на фронті)
+    Збереження: усі мітки цього зображення з фронту перезаписуються.
+    """
+    image = get_object_or_404(OrderImage, id=image_id)
+    order = image.order
+    items = order.items.all().order_by("id")
+
+    # 🔹 POST — зберігаємо всі мітки з JSON
+    if request.method == "POST":
+        markers_json = request.POST.get("markers_json") or "[]"
+
+        try:
+            data = json.loads(markers_json)
+        except json.JSONDecodeError:
+            data = []
+
+        # повністю чистимо мітки для цього зображення
+        OrderImageMarker.objects.filter(image=image).delete()
+
+        # створюємо наново
+        bulk = []
+        for m in data:
+            try:
+                x = Decimal(str(m.get("x", 0)))
+                y = Decimal(str(m.get("y", 0)))
+            except Exception:
+                continue
+
+            item_id = m.get("item_id")
+            color = m.get("color") or "#FF0000"
+
+            bulk.append(
+                OrderImageMarker(
+                    image=image,
+                    item_id=item_id or None,
+                    x=x,
+                    y=y,
+                    color=color,
+                )
+            )
+
+        if bulk:
+            OrderImageMarker.objects.bulk_create(bulk)
+
+        return redirect("calculate_order", order_id=order.id)
+
+    # 🔹 GET — збираємо всі існуючі мітки цього зображення
+    markers_qs = (
+        OrderImageMarker.objects.filter(image=image)
+        .select_related("item")
+        .order_by("id")
+    )
+
+    markers = []
+    for m in markers_qs:
+        markers.append(
+            {
+                "id": m.id,
+                "x": float(m.x),
+                "y": float(m.y),
+                "item_id": m.item_id,
+                "item_name": m.item.name if m.item else "Без позиції",
+                "color": m.color or "#FF0000",
+            }
+        )
+
+    context = {
+        "image": image,
+        "order": order,
+        "items": items,
+        "markers": markers,  # піде в JS як initialMarkers
+    }
+    return render(request, "doors/annotate_order_image.html", context)

@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+  <h2 class="fw-bold mb-4 text-center">➕ Додати робочі години</h2>
+
+  <form method="post" class="card p-4 shadow-sm">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label fw-bold">Працівник</label>
+      <select name="worker" class="form-select" required>
+        <option value="">Оберіть працівника</option>
+        {% for w in workers %}
+        <option value="{{ w.id }}">{{ w.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label fw-bold">Дата</label>
+      <input type="date" name="date" class="form-control" value="{{ today|date:'Y-m-d' }}">
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label fw-bold">Кількість годин</label>
+      <input type="number" name="hours" class="form-control" step="0.25" required>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label fw-bold">Коментар (необов’язково)</label>
+      <textarea name="comment" class="form-control" rows="2"></textarea>
+    </div>
+
+    <button class="btn btn-success w-100 py-2">💾 Зберегти</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,84 @@
+{% extends 'base.html' %}
+{% load custom_filters %}
+{% block content %}
+<div class="container py-4">
+  <h4 class="fw-bold mb-3">✏️ Редагування позиції — №{{ order.order_number }}</h4>
+
+  <form method="post" class="card p-4 shadow-sm">
+    {% csrf_token %}
+
+    <div class="row g-3">
+      <div class="col-md-8">
+        <label class="form-label fw-bold">Назва позиції</label>
+        <input type="text" name="name" class="form-control" value="{{ item.name }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-bold">Кількість позицій</label>
+        <input type="number" name="quantity" min="1" class="form-control" value="{{ item.quantity }}">
+      </div>
+    </div>
+
+    <hr class="my-4">
+
+    <div class="row">
+      <div class="col-lg-6">
+        <h6 class="fw-bold mb-2">Вироби</h6>
+        <div class="border rounded p-2" style="max-height: 360px; overflow:auto;">
+          {% for p in products %}
+          <label class="d-flex align-items-center gap-2 py-1 border-bottom">
+            <input type="checkbox" name="products" value="{{ p.id }}"
+                   {% if p.id in selected_products_ids %}checked{% endif %}>
+            {% if p.image %}<img src="{{ p.image.url }}" width="40" height="40" style="object-fit:cover;border-radius:6px">{% endif %}
+            <span>{{ p.name }} ({{ p.base_ks }} к/с){% if p.category %} — <small class="text-muted">{{ p.category.name }}</small>{% endif %}</span>
+          </label>
+          {% empty %}
+          <div class="text-muted small">Немає виробів</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <h6 class="fw-bold mb-2">Коефіцієнти</h6>
+        <div class="border rounded p-2" style="max-height: 360px; overflow:auto;">
+          {% for c in coefficients %}
+          <label class="d-inline-flex align-items-center gap-2 me-3 my-1">
+            <input type="checkbox" name="coefficients" value="{{ c.id }}"
+                   {% if c.id in selected_coeffs_ids %}checked{% endif %}>
+            <span>{{ c.name }} ×{{ c.value }}</span>
+          </label>
+          {% empty %}
+          <div class="text-muted small">Немає коефіцієнтів</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <hr class="my-4">
+
+    <h6 class="fw-bold mb-2">Доповнення (з кількістю)</h6>
+    <div class="border rounded p-2" style="max-height: 360px; overflow:auto;">
+      {% for a in addons %}
+      <div class="input-group input-group-sm mb-2">
+        <div class="input-group-text">
+          <input type="checkbox" class="form-check-input mt-0" name="additions" value="{{ a.id }}"
+                 {% if a.id in addition_qty %}checked{% endif %}>
+        </div>
+        <span class="input-group-text w-50">{{ a.name }}</span>
+        <input type="number" class="form-control" name="add_qty_{{ a.id }}" min="1"
+               value="{{ addition_qty|get_item:a.id|default:1 }}">
+        <span class="input-group-text">{{ a.ks_value }} к/с</span>
+      </div>
+      {% empty %}
+      <div class="text-muted small">Немає доповнень</div>
+      {% endfor %}
+    </div>
+
+    <div class="d-flex gap-2 mt-4">
+      <a href="{% url 'calculate_order' order.id %}" class="btn btn-outline-secondary">⬅️ Повернутись</a>
+      <button class="btn btn-primary">💾 Зберегти зміни</button>
+      <a href="{% url 'order_item_delete' item.id %}" class="btn btn-danger ms-auto"
+         onclick="return confirm('Видалити цю позицію?')">🗑️ Видалити</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

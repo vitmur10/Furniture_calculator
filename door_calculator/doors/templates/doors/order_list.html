@@ -1,0 +1,184 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+  <h2 class="fw-bold mb-4 text-center">📋 Список замовлень</h2>
+
+  {% if orders %}
+  <div class="table-responsive shadow-sm">
+    <table class="table table-hover align-middle">
+      <thead class="table-primary text-center">
+        <tr>
+          <th>№</th>
+          <th>Дата</th>
+          <th>Позицій</th>
+          <th>Вартість</th>
+
+          {# ✅ Статуси тільки суперюзеру #}
+          {% if request.user.is_superuser %}
+            <th>Статус</th>
+            <th>Фінансовий статус</th>
+          {% endif %}
+
+          <th>Виконання</th>
+
+          {# ✅ Дії тільки суперюзеру (PDF/видалення) #}
+          {% if request.user.is_superuser %}
+            <th>Дії</th>
+          {% else %}
+            <th>Перегляд</th>
+          {% endif %}
+        </tr>
+      </thead>
+
+      <tbody class="text-center">
+        {% for order in orders %}
+
+        <tr class="{% if order.status == 'completed' %}table-success{% elif order.status == 'postponed' %}table-warning{% endif %}">
+          <td><strong>{{ order.order_number }}</strong></td>
+          <td>{{ order.created_at|date:"d.m.Y" }}</td>
+          <td>{{ order.items.count }}</td>
+          <td>{{ order.total_cost|floatformat:2 }} грн</td>
+
+          {% if request.user.is_superuser %}
+            <!-- Статус (суперюзер) -->
+            <td>
+              <select class="form-select form-select-sm status-select"
+                      data-id="{{ order.id }}"
+                      data-kind="status">
+                {% for key, label in order.STATUS_CHOICES %}
+                  <option value="{{ key }}" {% if key == order.status %}selected{% endif %}>
+                    {{ label }}
+                  </option>
+                {% endfor %}
+              </select>
+            </td>
+
+            <!-- Фінансовий статус (суперюзер) -->
+            <td>
+              <select class="form-select form-select-sm status-select"
+                      data-id="{{ order.id }}"
+                      data-kind="status_finance">
+                {% for key, label in order.STATUS_CHOICES_FINANCE %}
+                  <option value="{{ key }}" {% if key == order.status_finance %}selected{% endif %}>
+                    {{ label }}
+                  </option>
+                {% endfor %}
+              </select>
+            </td>
+          {% endif %}
+
+          <!-- Відсоток виконання -->
+          <td style="width:180px;">
+            <div class="progress" style="height: 22px;">
+              <div class="progress-bar
+                  {% if order.completion_percent >= 100 %}bg-success
+                  {% elif order.completion_percent >= 50 %}bg-info
+                  {% else %}bg-warning{% endif %}"
+                   role="progressbar"
+                   style="width: {{ order.completion_percent }}%;"
+                   aria-valuenow="{{ order.completion_percent }}"
+                   aria-valuemin="0" aria-valuemax="100">
+                {{ order.completion_percent }}%
+              </div>
+            </div>
+          </td>
+
+          {% if request.user.is_superuser %}
+            <!-- Дії (суперюзер) -->
+            <td>
+              <a href="{% url 'calculate_order' order.id %}"
+                 class="btn btn-sm btn-success"
+                 title="Редагувати">
+                🔧
+              </a>
+
+              <a href="{% url 'generate_pdf' order.id %}"
+                 class="btn btn-sm btn-outline-primary"
+                 target="_blank"
+                 title="PDF">
+                📄
+              </a>
+
+              <button type="button"
+                      class="btn btn-sm btn-danger ms-1 delete-order-btn"
+                      data-url="{% url 'order_delete' order.id %}"
+                      title="Видалити замовлення">
+                🗑️
+              </button>
+            </td>
+          {% else %}
+            <!-- Перегляд (звичайний юзер) -->
+            <td>
+              <a href="{% url 'calculate_order' order.id %}"
+                 class="btn btn-sm btn-outline-primary"
+                 title="Переглянути">
+                👁️
+              </a>
+            </td>
+          {% endif %}
+        </tr>
+
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+    <div class="alert alert-info text-center mt-4">
+      Немає створених замовлень.
+    </div>
+  {% endif %}
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  // ✅ Статуси оновлюємо тільки якщо елементи є (тобто суперюзер)
+  document.querySelectorAll(".status-select").forEach(select => {
+    select.addEventListener("change", async (e) => {
+      const id = e.target.dataset.id;
+      const value = e.target.value;
+      const kind = e.target.dataset.kind || "status";
+
+      const resp = await fetch(`/update-status/${id}/`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": "{{ csrf_token }}"
+        },
+        body: JSON.stringify({ kind: kind, value: value })
+      });
+
+      if (resp.ok) {
+        e.target.classList.add("border-success");
+        setTimeout(() => e.target.classList.remove("border-success"), 800);
+      } else {
+        alert("❌ Помилка при оновленні статусу.");
+      }
+    });
+  });
+
+  // ✅ Видалення замовлення (тільки суперюзер — кнопка існує лише в нього)
+  document.querySelectorAll(".delete-order-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("Дійсно видалити це замовлення?")) return;
+
+      const url = btn.dataset.url;
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "X-CSRFToken": "{{ csrf_token }}"
+        }
+      });
+
+      if (resp.ok) {
+        const row = btn.closest("tr");
+        if (row) row.remove();
+      } else {
+        alert("❌ Помилка при видаленні замовлення.");
+      }
+    });
+  });
+});
+</script>
+{% endblock %}

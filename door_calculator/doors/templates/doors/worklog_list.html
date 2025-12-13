@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+  <h2 class="fw-bold mb-4 text-center">🕒 Облік робочих годин</h2>
+
+  <!-- Форма фільтрів -->
+  <form method="get" class="card p-3 mb-4 shadow-sm">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Працівник</label>
+        <select name="worker" class="form-select">
+          <option value="">Усі</option>
+          {% for w in workers %}
+            <option value="{{ w.id }}" {% if selected_worker == w.id|stringformat:'s' %}selected{% endif %}>
+              {{ w.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Замовлення</label>
+        <select name="order" class="form-select">
+          <option value="">Усі</option>
+          {% for o in orders %}
+            <option value="{{ o.id }}" {% if selected_order == o.id|stringformat:'s' %}selected{% endif %}>
+              №{{ o.order_number }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">Від</label>
+        <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">До</label>
+        <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+      </div>
+
+      <div class="col-md-2">
+        <button class="btn btn-primary w-100">🔍 Фільтрувати</button>
+      </div>
+    </div>
+  </form>
+
+  <!-- Таблиця робочих годин -->
+  <div class="table-responsive">
+    <table class="table table-bordered table-hover align-middle">
+      <thead class="table-primary">
+        <tr>
+          <th>Дата</th>
+          <th>Працівник</th>
+          <th>Посада</th>
+          <th>Замовлення</th>
+          <th>Годин</th>
+          <th>Коментар</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td>{{ log.date|date:"d.m.Y" }}</td>
+          <td>{{ log.worker.name }}</td>
+          <td>{{ log.worker.position|default:"—" }}</td>
+          <td>{% if log.order %}№{{ log.order.order_number }}{% else %}—{% endif %}</td>
+          <td>{{ log.hours|floatformat:2 }}</td>
+          <td>{{ log.comment|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="text-center text-muted">Записів не знайдено</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Підсумки -->
+  {% if totals %}
+  <div class="card mt-4 shadow-sm">
+    <div class="card-header bg-success text-white fw-bold">Підсумки по працівниках</div>
+    <div class="card-body p-0">
+      <table class="table table-striped mb-0 text-center align-middle">
+        <thead>
+          <tr>
+            <th>Працівник</th>
+            <th>Посада</th>
+            <th>Всього годин</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in totals %}
+          <tr>
+            <td>{{ t.worker__name }}</td>
+            <td>{{ t.worker__position|default:"—" }}</td>
+            <td class="fw-bold">{{ t.total_hours|floatformat:2 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

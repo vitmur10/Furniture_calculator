@@ -1,0 +1,424 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<style>
+  .annotate-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    padding: 20px;
+  }
+
+  .image-panel {
+    flex: 1 1 380px;
+    min-width: 320px;
+  }
+
+  .image-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+    background: #111;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 0 18px rgba(0,0,0,0.3);
+  }
+
+  .image-wrapper img {
+    width: 100%;
+    height: auto;
+    max-height: 520px;
+    object-fit: contain;
+    display: block;
+  }
+
+  .marker-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none; /* кліки йдуть по самому img */
+  }
+
+  .marker-dot {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 4px rgba(0,0,0,0.6);
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .marker-dot:hover {
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+
+  .marker-dot::after {
+    content: attr(data-label);
+    position: absolute;
+    top: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.8);
+    color: #fff;
+    font-size: 10px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  .info-panel {
+    flex: 0 0 320px;
+    max-width: 380px;
+  }
+
+  .markers-list {
+    max-height: 360px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 8px;
+    background: #fff;
+  }
+
+  .marker-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+
+  .marker-item:nth-child(odd) {
+    background: #f8f9fa;
+  }
+
+  .color-pill {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid #ccc;
+  }
+
+  .marker-remove-btn {
+    margin-left: auto;
+    border: none;
+    background: transparent;
+    color: #dc3545;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .hint-box {
+    font-size: 13px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: 8px;
+  }
+</style>
+
+<div class="container py-4">
+  <h3 class="mb-3">
+    🖊️ Розмітка фото для замовлення №{{ order.order_number }}
+  </h3>
+
+  <a href="{% url 'calculate_order' order.id %}" class="btn btn-sm btn-outline-secondary mb-3">
+    ← До розрахунку замовлення
+  </a>
+
+  <div class="annotate-layout">
+    <!-- 🖼 ЛІВА ПАНЕЛЬ: ЗОБРАЖЕННЯ -->
+    <div class="image-panel">
+      <div class="image-wrapper" id="imageWrapper">
+        <img src="{{ image.image.url }}" alt="Фото замовлення" id="annotImg">
+        <div class="marker-layer" id="markerLayer"></div>
+      </div>
+      <div class="hint-box mt-2">
+        1️⃣ Оберіть позицію.<br>
+        2️⃣ Виберіть колір мітки.<br>
+        3️⃣ Клік по фото — додасть мітку для цієї позиції.<br>
+        4️⃣ Збереження замінить усі мітки для цього фото.
+      </div>
+    </div>
+
+    <!-- 📋 ПРАВА ПАНЕЛЬ: ФОРМА -->
+    <div class="info-panel">
+      <form method="post" id="markersForm">
+        {% csrf_token %}
+        <input type="hidden" name="markers_json" id="markersJson">
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Позиція (виріб)</label>
+          <select class="form-select" id="itemSelect">
+            <option value="">— Оберіть позицію —</option>
+            {% for it in items %}
+              <option value="{{ it.id }}">{{ it.name }} (ID: {{ it.id }})</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Колір міток</label>
+          <div class="d-flex align-items-center gap-2">
+            <input type="color" id="colorPicker" value="#FF0000" class="form-control form-control-color" title="Оберіть колір">
+            <select id="colorPreset" class="form-select form-select-sm" style="max-width: 180px;">
+              <option value="">— Палітра —</option>
+              <option value="#e6194b">Червоний</option>
+              <option value="#3cb44b">Зелений</option>
+              <option value="#0082c8">Синій</option>
+              <option value="#f58231">Помаранчевий</option>
+              <option value="#911eb4">Фіолетовий</option>
+              <option value="#46f0f0">Бірюзовий</option>
+              <option value="#f032e6">Рожевий</option>
+              <option value="#008080">Тіл</option>
+              <option value="#ffe119">Жовтий</option>
+              <option value="#800000">Бордовий</option>
+              <option value="#9a6324">Коричневий</option>
+              <option value="#469990">М'ятний</option>
+              <option value="#000075">Темно-синій</option>
+              <option value="#bfef45">Лайм</option>
+              <option value="#fabed4">Світло-рожевий</option>
+              <option value="#dcbeff">Світло-фіолетовий</option>
+              <option value="#aaffc3">Світло-зелений</option>
+              <option value="#ffd8b1">Персиковий</option>
+              <option value="#808000">Оливковий</option>
+              <option value="#000000">Чорний</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-between mb-2">
+          <button type="button" class="btn btn-sm btn-outline-danger" id="resetCurrentItemBtn">
+            🧹 Скинути мітки для позиції
+          </button>
+          <button type="submit" class="btn btn-sm btn-primary">
+            💾 Зберегти мітки
+          </button>
+        </div>
+
+        <div class="mt-3">
+          <h6 class="fw-bold">Мітки на фото:</h6>
+          <div class="markers-list" id="markersList"></div>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# ===== JS: початкові мітки з бекенду ===== #}
+<script>
+  const initialMarkers = [
+    {% for m in markers %}
+      {
+        id: {{ m.id }},
+        x: {{ m.x|floatformat:2 }},
+        y: {{ m.y|floatformat:2 }},
+        item_id: {{ m.item_id|default:"null" }},
+        item_name: "{{ m.item_name|escapejs }}",
+        color: "{{ m.color }}"
+      }{% if not forloop.last %},{% endif %}
+    {% endfor %}
+  ];
+</script>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const img = document.getElementById("annotImg");
+  const wrapper = document.getElementById("imageWrapper");
+  const markerLayer = document.getElementById("markerLayer");
+  const itemSelect = document.getElementById("itemSelect");
+  const colorPicker = document.getElementById("colorPicker");
+  const colorPreset = document.getElementById("colorPreset");
+  const resetCurrentItemBtn = document.getElementById("resetCurrentItemBtn");
+  const markersList = document.getElementById("markersList");
+  const markersJson = document.getElementById("markersJson");
+  const form = document.getElementById("markersForm");
+
+  // усі мітки цього зображення
+  let allMarkers = Array.isArray(initialMarkers) ? [...initialMarkers] : [];
+
+  // поточна позиція та колір
+  let currentItemId = "";
+  let currentItemName = "";
+  let currentColor = colorPicker.value;
+
+  // Якщо хочемо авто-колір для кожної позиції — проста палітра
+  const palette = [
+    "#e6194b","#3cb44b","#0082c8","#f58231","#911eb4","#46f0f0","#f032e6","#008080",
+    "#ffe119","#800000","#9a6324","#469990","#000075","#bfef45","#fabed4","#dcbeff",
+    "#aaffc3","#ffd8b1","#808000","#000000","#82b7ff","#ff6eb4","#7fef6f","#ff9f40",
+    "#8f4bff","#00c9a7","#ff4d4f","#ffcc00","#00bcd4","#673ab7"
+  ];
+  const itemColorMap = {};
+
+  function getColorForItem(itemId) {
+    if (!itemId) return currentColor;
+    if (itemColorMap[itemId]) return itemColorMap[itemId];
+
+    const existing = allMarkers.find(m => String(m.item_id) === String(itemId) && m.color);
+    if (existing) {
+      itemColorMap[itemId] = existing.color;
+      return existing.color;
+    }
+    const idx = Object.keys(itemColorMap).length % palette.length;
+    const c = palette[idx];
+    itemColorMap[itemId] = c;
+    return c;
+  }
+
+  // коли міняємо позицію
+  itemSelect.addEventListener("change", () => {
+    currentItemId = itemSelect.value;
+    currentItemName = itemSelect.options[itemSelect.selectedIndex]?.text || "";
+
+    if (currentItemId) {
+      const autoColor = getColorForItem(currentItemId);
+      currentColor = autoColor;
+      colorPicker.value = autoColor;
+    }
+  });
+
+  // колір з color input
+  colorPicker.addEventListener("input", () => {
+    currentColor = colorPicker.value;
+    if (currentItemId) {
+      itemColorMap[currentItemId] = currentColor;
+    }
+    renderMarkers();
+  });
+
+  // вибір з пресетів
+  colorPreset.addEventListener("change", () => {
+    if (!colorPreset.value) return;
+    currentColor = colorPreset.value;
+    colorPicker.value = currentColor;
+    if (currentItemId) {
+      itemColorMap[currentItemId] = currentColor;
+    }
+    renderMarkers();
+  });
+
+  // клік по зображенню -> додаємо мітку
+  wrapper.addEventListener("click", (e) => {
+    if (e.target !== img) return;  // щоб не ловити кліки по мітках
+    if (!currentItemId) {
+      alert("Спочатку оберіть позицію.");
+      return;
+    }
+
+    const rect = img.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+
+    const marker = {
+      id: null,
+      x: x,
+      y: y,
+      item_id: parseInt(currentItemId),
+      item_name: currentItemName || ("Позиція #" + currentItemId),
+      color: currentColor || "#FF0000"
+    };
+    allMarkers.push(marker);
+    renderMarkers();
+  });
+
+  // скинути мітки тільки для поточної позиції
+  resetCurrentItemBtn.addEventListener("click", () => {
+    if (!currentItemId) {
+      alert("Оберіть позицію, для якої треба скинути мітки.");
+      return;
+    }
+    if (!confirm("Скинути всі мітки для цієї позиції?")) return;
+    allMarkers = allMarkers.filter(m => String(m.item_id) !== String(currentItemId));
+    renderMarkers();
+  });
+
+  // видалення однієї мітки
+  function deleteMarkerByIndex(idx) {
+    allMarkers.splice(idx, 1);
+    renderMarkers();
+  }
+
+  // відмальовуємо мітки на фото + в списку
+  function renderMarkers() {
+    // шар на фото
+    markerLayer.innerHTML = "";
+    allMarkers.forEach((m, index) => {
+      const dot = document.createElement("div");
+      dot.className = "marker-dot";
+      dot.style.left = m.x + "%";
+      dot.style.top = m.y + "%";
+      dot.style.backgroundColor = m.color || "#FF0000";
+      dot.dataset.label = m.item_name || "";
+      markerLayer.appendChild(dot);
+
+      // можна додати клік по точці для видалення
+      dot.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (confirm("Видалити цю мітку?")) {
+          deleteMarkerByIndex(index);
+        }
+      });
+    });
+
+    // список праворуч
+    markersList.innerHTML = "";
+    if (!allMarkers.length) {
+      markersList.innerHTML = "<div class='text-muted small'>Міток ще немає.</div>";
+      return;
+    }
+
+    allMarkers.forEach((m, index) => {
+      const row = document.createElement("div");
+      row.className = "marker-item";
+
+      const pill = document.createElement("div");
+      pill.className = "color-pill";
+      pill.style.backgroundColor = m.color || "#FF0000";
+
+      const label = document.createElement("div");
+      label.innerHTML =
+        `<strong>${m.item_name || "Без позиції"}</strong> &nbsp; ` +
+        `<span class="text-muted">(${m.x.toFixed(1)}%, ${m.y.toFixed(1)}%)</span>`;
+
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "marker-remove-btn";
+      delBtn.innerHTML = "&times;";
+      delBtn.addEventListener("click", () => {
+        if (confirm("Видалити цю мітку?")) {
+          deleteMarkerByIndex(index);
+        }
+      });
+
+      row.appendChild(pill);
+      row.appendChild(label);
+      row.appendChild(delBtn);
+      markersList.appendChild(row);
+    });
+  }
+
+  // при сабміті форми серіалізуємо всі мітки
+  form.addEventListener("submit", (e) => {
+    markersJson.value = JSON.stringify(
+      allMarkers.map(m => ({
+        x: m.x,
+        y: m.y,
+        item_id: m.item_id,
+        color: m.color
+      }))
+    );
+  });
+
+  // стартовий рендер
+  renderMarkers();
+});
+</script>
+
+{% endblock %}

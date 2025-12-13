@@ -1,0 +1,981 @@
+{% extends 'base.html' %}
+{% block content %}
+<style>
+  .order-layout {
+    display: flex;
+    flex-wrap: nowrap;
+    height: auto;
+    min-height: calc(100vh - 120px);
+    overflow: visible;
+    transition: all 0.4s ease;
+    align-items: flex-start;
+  }
+
+  .order-sketch {
+    flex: 0 0 420px;
+    max-width: 420px;
+    background: transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    border-right: 3px solid #0d6efd22;
+    position: sticky;          /* 🔥 робимо колонку «липкою» */
+    top: 80px;                 /* відступ зверху при прокрутці */
+    align-self: flex-start;    /* щоб sticky працював всередині flex */
+    transition: all 0.4s ease;
+    padding: 20px;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  .order-sketch.collapsed {
+    flex: 0;
+    opacity: 0;
+    visibility: hidden;
+    width: 0;
+  }
+
+  .order-sketch.dragging {
+    cursor: grabbing;
+  }
+
+  .main-image-wrapper {
+    width: 100%;
+    height: 380px;
+    border-radius: 12px;
+    box-shadow: 0 0 25px rgba(0,0,0,0.3);
+    overflow: hidden;
+    position: relative;
+    background: #111;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
+  }
+
+  .main-image-inner {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform-origin: center center;
+    transition: transform 0.05s linear;
+  }
+
+  .main-image-inner img {
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+    object-fit: contain;
+    user-select: none;
+    pointer-events: auto;
+  }
+
+  .marker-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .marker-dot {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid red;
+    background: rgba(255,0,0,0.25);
+    transform: translate(-50%, -50%);
+  }
+
+  .marker-dot::after {
+    content: attr(data-label);
+    position: absolute;
+    top: -18px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: #fff;
+    background: rgba(0,0,0,0.6);
+    padding: 1px 4px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  .zoom-hint {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    font-size: 12px;
+    padding: 5px 9px;
+    background: rgba(255,255,255,.9);
+    border-radius: 8px;
+    border: 1px solid rgba(0,0,0,.08);
+    z-index: 5;
+  }
+
+  .thumbs-row {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 110px;
+    overflow-y: auto;
+  }
+
+  .thumbs-row img {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.1s, border-color 0.1s;
+  }
+
+  .thumbs-row img.active {
+    border-color: #0d6efd;
+  }
+
+  .thumbs-row img:hover {
+    transform: scale(1.05);
+  }
+
+  .toggle-btn {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background: rgba(255,255,255,0.85);
+    border: none;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-weight: 600;
+    cursor: pointer;
+    z-index: 10;
+    transition: all 0.25s ease;
+  }
+  .toggle-btn:hover {
+    background: #0d6efd;
+    color: #fff;
+  }
+
+  #restoreSketch {
+    display: none;
+    position: fixed;
+    top: 80px;
+    left: 20px;
+    z-index: 1000;
+    background: #0d6efd;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    transition: all 0.3s ease;
+  }
+  #restoreSketch:hover { background: #0b5ed7; }
+
+  .order-form {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2rem;
+    background: var(--card-bg);
+  }
+
+  .product-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: .75rem;
+    background: var(--card-bg);
+    border-radius: 8px;
+    padding: 6px 10px;
+    transition: background 0.25s ease;
+  }
+  .product-option:hover { background: rgba(13, 110, 253, 0.05); }
+
+  .product-option img {
+    width: 45px;
+    height: 45px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    transition: transform 0.2s ease;
+  }
+  .product-option img:hover { transform: scale(1.05); }
+
+  .summary-table img {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+  }
+
+  .summary-table th {
+    background-color: #0d6efd;
+    color: #fff;
+  }
+
+  .total-box {
+    font-size: 1.3rem;
+    font-weight: bold;
+    text-align: center;
+    background: #d1e7dd;
+    color: #51aa16;
+    padding: 0.8rem;
+    border-radius: 12px;
+    margin-top: 1.2rem;
+  }
+
+  .final-form {
+    display: none;
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  }
+  .final-form.visible {
+    display: block;
+    animation: fadeIn 0.4s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .category-card { background: #fff; }
+  .category-card h6 { margin-bottom: .5rem; }
+
+  .floating-upload {
+    margin-top: 12px;
+    width: 100%;
+  }
+
+  /* 🔽 аккордеони категорій */
+  .category-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .category-toggle-btn {
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #0d6efd;
+  }
+
+  .category-toggle-btn .icon {
+    display: inline-block;
+    transition: transform 0.2s ease;
+  }
+
+  .category-body.collapsed {
+    display: none;
+  }
+
+  .category-toggle-btn.collapsed .icon {
+    transform: rotate(-90deg);
+  }
+
+  @media (max-width: 991px) {
+    .order-layout { flex-direction: column; height: auto; }
+    .order-sketch {
+      flex: none;
+      max-width: 100%;
+      width: 100%;
+      border-right: none;
+      border-bottom: 3px solid #0d6efd22;
+      position: static;  /* на мобілці забираємо sticky, щоб не ламало верстку */
+      top: auto;
+    }
+  }
+</style>
+
+<button id="restoreSketch">📈 Показати ескіз</button>
+
+<div class="order-layout">
+  <!-- 🔹 Ліва колонка: галерея фото -->
+  <div class="order-sketch" id="sketch-section">
+    {% if order.images.all %}
+      {% with first_img=order.images.all.0 %}
+      <button class="toggle-btn" id="toggleSketch">📉 Згорнути</button>
+
+      <div class="main-image-wrapper" id="mainImageWrapper">
+        <div class="main-image-inner" id="mainImageInner">
+          <img src="{{ first_img.image.url }}"
+               alt="Ескіз замовлення"
+               id="mainImage"
+               data-image-id="{{ first_img.id }}">
+
+          {# Контейнер, в який JS домалює мітки для поточного зображення #}
+          <div class="marker-layer" id="markerLayer"></div>
+        </div>
+        <div class="zoom-hint">
+          Коліщатко — зум, мишкою — перетягнути
+        </div>
+      </div>
+
+      <a href="{% url 'annotate_order_image' first_img.id %}"
+         class="btn btn-outline-secondary btn-sm w-100 mt-2"
+         id="annotateBtn">
+        🖊️ Розмітити фото
+      </a>
+
+      <div class="thumbs-row mt-2">
+        {% for img in order.images.all %}
+          <img src="{{ img.image.url }}"
+               class="thumb-img {% if forloop.first %}active{% endif %}"
+               data-full="{{ img.image.url }}"
+               data-image-id="{{ img.id }}">
+        {% endfor %}
+      </div>
+      {% endwith %}
+    {% else %}
+      <div class="text-muted small mb-2">Фото замовлення ще не завантажені</div>
+    {% endif %}
+
+    <!-- форма завантаження фото -->
+    <form method="post" enctype="multipart/form-data" class="floating-upload">
+      {% csrf_token %}
+      <input type="hidden" name="upload_images" value="1">
+      <div class="d-flex flex-column gap-2">
+        <input type="file" name="images" accept="image/*" multiple
+               class="form-control form-control-sm">
+        <button class="btn btn-sm btn-primary">⬆️ Завантажити фото (до 50)</button>
+      </div>
+    </form>
+
+    <!-- форма додаткових файлів (креслення/підрахунки) -->
+    <form method="post" enctype="multipart/form-data" class="floating-upload mt-3">
+      {% csrf_token %}
+      <input type="hidden" name="upload_files" value="1">
+      <div class="d-flex flex-column gap-2">
+        <input type="file" name="files" multiple
+               class="form-control form-control-sm">
+        <input type="text" name="files_desc"
+               class="form-control form-control-sm"
+               placeholder="Загальний опис (необов'язково)">
+        <button class="btn btn-sm btn-outline-secondary">📎 Додати файли</button>
+      </div>
+    </form>
+
+    {% if order.files.all %}
+      <div class="mt-3 w-100">
+        <h6 class="fw-bold mb-2">Прикріплені файли:</h6>
+        <ul class="list-unstyled small">
+          {% for f in order.files.all %}
+            <li class="mb-2">
+              <form method="post" class="d-flex align-items-center gap-2">
+                {% csrf_token %}
+
+                <a href="{{ f.file.url }}" target="_blank" class="text-decoration-none flex-grow-1">
+                  📄 {{ f.description|default:f.file.name|cut:"order_files/" }}
+                </a>
+
+                <input type="text"
+                       name="file_desc"
+                       value="{{ f.description|default:f.file.name|cut:'order_files/' }}"
+                       class="form-control form-control-sm"
+                       style="max-width: 220px;">
+
+                <button type="submit"
+                        name="update_file"
+                        value="{{ f.id }}"
+                        class="btn btn-sm btn-outline-primary">
+                  💾
+                </button>
+
+                <button type="submit"
+                        name="delete_file"
+                        value="{{ f.id }}"
+                        class="btn btn-sm btn-outline-danger"
+                        onclick="return confirm('Видалити цей файл?');">
+                  🗑
+                </button>
+              </form>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- 🔹 Права колонка: форма замовлення -->
+    {% if request.user.is_superuser %}
+
+  <div class="order-form">
+    <h4 class="fw-bold mb-2">Замовлення №{{ order.order_number }}</h4>
+    <p class="text-muted mb-4">Вартість 1 к/с: <strong>{{ rate }} грн</strong></p>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="btn-group" role="group">
+        <button type="button" class="btn btn-outline-primary btn-sm" id="viewByCategories">
+          🗂️ По категоріях
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="viewFlatList">
+          📄 Плоский список
+        </button>
+      </div>
+    </div>
+
+    <!-- 🔹 Блок даних замовника -->
+    <div class="mb-4 border rounded p-3 bg-white">
+      <form method="post" class="row g-2 align-items-end" id="customerForm">
+        {% csrf_token %}
+        <input type="hidden" name="assign_customer" value="1">
+
+        <div class="col-12">
+          <label class="form-label fw-bold mb-1">Замовник</label>
+          <select name="existing_customer" id="existingCustomerSelect" class="form-select">
+            <option value="">— Створити нового —</option>
+            {% for c in customers %}
+            <option value="{{ c.id }}" {% if order.customer and c.id == order.customer.id %}selected{% endif %}>
+              {{ c.name }}{% if c.phone %} — {{ c.phone }}{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div id="newCustomerFields" class="row g-3 mt-1"
+             {% if order.customer %}style="display:none"{% endif %}>
+          <div class="col-md-6">
+            <label class="form-label small">Імʼя / Компанія</label>
+            <input type="text"
+                   name="customer_name"
+                   class="form-control form-control-sm"
+                   placeholder="Напр.: Іван або ТОВ БудМонтаж"
+                   value="{% if order.customer %}{{ order.customer.name }}{% endif %}">
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label small">Телефон</label>
+            <input type="text"
+                   name="customer_phone"
+                   class="form-control form-control-sm"
+                   placeholder="+38 (0__) ___ __ __"
+                   value="{% if order.customer and order.customer.phone %}{{ order.customer.phone }}{% endif %}">
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label small">Email</label>
+            <input type="email"
+                   name="customer_email"
+                   class="form-control form-control-sm"
+                   placeholder="example@gmail.com"
+                   value="{% if order.customer and order.customer.email %}{{ order.customer.email }}{% endif %}">
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label small">Адреса доставки</label>
+            <input type="text"
+                   name="customer_address"
+                   class="form-control form-control-sm"
+                   placeholder="Місто, вулиця, будинок"
+                   value="{% if order.customer and order.customer.address %}{{ order.customer.address }}{% endif %}">
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label small">ЄДРПОУ / ІПН</label>
+            <input type="text"
+                   name="customer_company_code"
+                   class="form-control form-control-sm"
+                   placeholder="Тільки для юр. осіб"
+                   value="{% if order.customer and order.customer.company_code %}{{ order.customer.company_code }}{% endif %}">
+          </div>
+        </div>
+
+        <div id="saveNewCustomerBtn" class="mt-3"
+             {% if order.customer %}style="display:none"{% endif %}>
+          <button class="btn btn-success btn-sm w-100">
+            💾 Зберегти нового замовника
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="mb-3">
+        <label class="form-label fw-bold">Назва позиції</label>
+        <input type="text" name="name" class="form-control"
+               placeholder="Наприклад: Двостулкові двері" required>
+      </div>
+
+      {% if categories %}
+      <div class="mb-3" id="productsByCategories" style="display:none;">
+        <label class="form-label fw-bold">Оберіть вироби (по категоріях):</label>
+        {% for cat in categories %}
+          <div class="category-card border rounded p-3 mb-3">
+            <div class="category-header"
+                 data-target="cat-body-{{ cat.id }}">
+              <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+              <button type="button"
+                      class="category-toggle-btn btn btn-sm p-0"
+                      data-target="cat-body-{{ cat.id }}">
+                <span class="icon">▾</span>
+                <span class="text">Згорнути</span>
+              </button>
+            </div>
+
+            <div id="cat-body-{{ cat.id }}" class="category-body mt-2">
+              {% for p in cat.products.all %}
+                <div class="product-option">
+                  <input type="checkbox" name="products" value="{{ p.id }}" class="form-check-input">
+                  {% if p.image %}
+                    <img src="{{ p.image.url }}" alt="{{ p.name }}">
+                  {% else %}
+                    <img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">
+                  {% endif %}
+                  <label>{{ p.name }} ({{ p.base_ks }} к/с)</label>
+                </div>
+              {% empty %}
+                <div class="text-muted small">Немає виробів у цій категорії</div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="mb-3" id="productsFlatList">
+        <label class="form-label fw-bold">Оберіть вироби:</label>
+        {% for p in products %}
+        <div class="product-option">
+          <input type="checkbox" name="products" value="{{ p.id }}" class="form-check-input">
+          {% if p.image %}
+            <img src="{{ p.image.url }}" alt="{{ p.name }}">
+          {% else %}
+            <img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">
+          {% endif %}
+          <label>{{ p.name }} ({{ p.base_ks }} к/с)</label>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-bold">Кількість позицій:</label>
+        <input type="number" name="item_qty" min="1" value="1" class="form-control" required>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-bold">Доповнення (з кількістю):</label>
+        {% for a in addons %}
+        <div class="input-group mb-2">
+          <div class="input-group-text">
+            <input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
+          </div>
+          <span class="input-group-text w-50">{{ a.name }}</span>
+          <input type="number" name="add_qty_{{ a.id }}" min="1" value="1" class="form-control">
+          <span class="input-group-text">{{ a.ks_value }} к/с</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label fw-bold">Коефіцієнти:</label>
+        {% for c in coefficients %}
+        <div class="form-check form-check-inline mb-2">
+          <input type="checkbox" name="coefficients" value="{{ c.id }}" class="form-check-input">
+          <label class="form-check-label">{{ c.name }} ×{{ c.value }}</label>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="text-center mb-4">
+        <button type="submit" class="btn btn-danger w-100 py-2">➕ Додати позицію</button>
+      </div>
+    </form>
+      {% endif %}
+
+    {% if items %}
+      <div class="summary-table">
+        <table class="table table-bordered text-center align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Фото</th>
+              <th>Позиція</th>
+              <th>К/С</th>
+              <th>Ціна</th>
+              <th>Дія</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for i in items %}
+            <tr>
+              <td>
+                {% with first_product=i.products.all|first %}
+                  {% if first_product and first_product.image %}
+                    <img src="{{ first_product.image.url }}" alt="{{ first_product.name }}">
+                  {% else %}
+                    <img src="https://via.placeholder.com/50x50?text=No+Img" alt="Без фото">
+                  {% endif %}
+                {% endwith %}
+              </td>
+              <td>
+                {{ i.name }}
+                {% if i.quantity and i.quantity|default:1 > 1 %}
+                  <span class="badge bg-light text-dark ms-1">× {{ i.quantity }}</span>
+                {% endif %}
+              </td>
+              <td>{{ i.total_ks.0|floatformat:2 }} × {{ i.total_ks.1|floatformat:2 }}</td>
+              <td>{{ i.total_cost|floatformat:2 }} грн</td>
+              <td>
+                <a href="{% url 'order_item_edit' i.id %}"
+                   class="btn btn-sm btn-outline-secondary">✏️ Редагувати</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+                {% if request.user.is_superuser %}
+
+    <div class="card shadow-sm my-4" style="border-left: 6px solid #28a745;">
+        <div class="card-body">
+
+            <h4 class="text-success fw-bold mb-3">
+                💰 Загальна вартість: {{ total|floatformat:2 }} грн
+            </h4>
+
+            <hr>
+
+            <h5 class="fw-bold text-primary text-center mb-3">Формула розрахунку</h5>
+
+            <div class="p-3 bg-light rounded border text-center">
+
+                <div class="mb-2 text-secondary">
+                    <span class="fw-bold">Σ к/с:</span>
+                    {{ effective_ks|floatformat:2 }} к/с
+                </div>
+
+                <div class="formula-box fw-bold fs-5 my-2">
+                    ({{ formula_expression }})
+                    × {{ rate|floatformat:2 }} грн
+                </div>
+
+                <div class="fs-5">
+                    = <span class="text-success fw-bold">{{ total|floatformat:2 }} грн</span>
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+
+      <div class="text-center mt-4">
+        <button id="finishOrder" class="btn btn-primary px-4 py-2">✅ Завершити замовлення</button>
+      </div>
+
+      <div id="finalForm" class="final-form mt-3">
+        <h5 class="fw-bold mb-3">Додаткові параметри</h5>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label fw-bold">Націнка (%)</label>
+            <input type="number" id="markup" class="form-control" placeholder="10">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-bold">Доставка (грн)</label>
+            <input type="number" id="deliveryCost" class="form-control" placeholder="300">
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label fw-bold">Пакування (грн)</label>
+            <input type="number" id="packingCost" class="form-control" placeholder="200">
+          </div>
+        </div>
+        <div class="text-center mt-4">
+          <button id="calcFinalDetailed" class="btn btn-success me-2">
+            📄 Детальний документ
+          </button>
+          <button id="calcFinalShort" class="btn btn-outline-primary">
+            📄 Комерційна пропозиція
+          </button>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+                    {% endif %}
+
+</div>
+
+{# ===== JS: дані міток для кожного зображення ===== #}
+<script>
+  const markersByImage = {
+    {% for image_id, markers in markers_by_image.items %}
+      "{{ image_id }}": [
+        {% for m in markers %}
+          {
+            x: {{ m.x|floatformat:2 }},
+            y: {{ m.y|floatformat:2 }},
+            item: "{{ m.item_name|escapejs }}",
+            color: "{{ m.color }}"
+          }{% if not forloop.last %},{% endif %}
+        {% endfor %}
+      ]{% if not forloop.last %},{% endif %}
+    {% endfor %}
+  };
+</script>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const toggleBtn     = document.getElementById("toggleSketch");
+  const restoreBtn    = document.getElementById("restoreSketch");
+  const sketchSection = document.getElementById("sketch-section");
+  const finishBtn     = document.getElementById("finishOrder");
+  const finalForm     = document.getElementById("finalForm");
+
+  const btnCat   = document.getElementById("viewByCategories");
+  const btnFlat  = document.getElementById("viewFlatList");
+  const blockCat = document.getElementById("productsByCategories");
+  const blockFlat= document.getElementById("productsFlatList");
+
+  if (btnCat && btnFlat && blockFlat) {
+    btnCat.addEventListener("click", () => {
+      if (blockCat) blockCat.style.display = "block";
+      blockFlat.style.display = "none";
+      btnCat.classList.add("btn-primary");
+      btnCat.classList.remove("btn-outline-primary");
+      btnFlat.classList.add("btn-outline-secondary");
+      btnFlat.classList.remove("btn-secondary");
+    });
+
+    btnFlat.addEventListener("click", () => {
+      if (blockCat) blockCat.style.display = "none";
+      blockFlat.style.display = "block";
+      btnFlat.classList.add("btn-secondary");
+      btnFlat.classList.remove("btn-outline-secondary");
+      btnCat.classList.add("btn-outline-primary");
+      btnCat.classList.remove("btn-primary");
+    });
+
+    btnFlat.click();
+  }
+
+  if (toggleBtn && restoreBtn && sketchSection) {
+    toggleBtn.addEventListener("click", () => {
+      sketchSection.classList.add("collapsed");
+      toggleBtn.style.display = "none";
+      restoreBtn.style.display = "block";
+    });
+
+    restoreBtn.addEventListener("click", () => {
+      sketchSection.classList.remove("collapsed");
+      toggleBtn.style.display = "block";
+      restoreBtn.style.display = "none";
+    });
+  }
+
+  if (finishBtn && finalForm) {
+    finishBtn.addEventListener("click", () => {
+      finalForm.classList.toggle("visible");
+    });
+  }
+
+  const btnPdfDetailed = document.getElementById("calcFinalDetailed");
+  const btnPdfShort    = document.getElementById("calcFinalShort");
+  const pdfBaseUrl     = "{% url 'generate_pdf' order.id %}";
+
+  function openPdf(isSimple) {
+    const markupVal   = parseFloat(document.getElementById("markup")?.value || 0) || 0;
+    const deliveryVal = parseFloat(document.getElementById("deliveryCost")?.value || 0) || 0;
+    const packingVal  = parseFloat(document.getElementById("packingCost")?.value  || 0) || 0;
+
+    let url = `${pdfBaseUrl}?markup=${markupVal}&delivery=${deliveryVal}&packing=${packingVal}`;
+    if (isSimple) url += "&simple=1";
+    window.open(url, "_blank");
+  }
+
+  if (btnPdfDetailed) btnPdfDetailed.addEventListener("click", () => openPdf(false));
+  if (btnPdfShort)    btnPdfShort.addEventListener("click", () => openPdf(true));
+
+  // ---- Галерея + мітки ----
+  const mainImage   = document.getElementById("mainImage");
+  const markerLayer = document.getElementById("markerLayer");
+  const thumbs      = document.querySelectorAll(".thumb-img");
+  const annotateBtn = document.getElementById("annotateBtn");
+
+    function renderMarkers(imageId) {
+      if (!markerLayer) return;
+      markerLayer.innerHTML = "";
+      if (!imageId) return;
+
+      const arr = markersByImage[imageId] || [];
+      arr.forEach(m => {
+        const dot = document.createElement("div");
+        dot.className = "marker-dot";
+        const color = m.color || "#ff4d4f";           // 🔴 беремо колір з БД
+        dot.style.left = m.x + "%";
+        dot.style.top  = m.y + "%";
+        dot.style.borderColor = color;
+        dot.style.backgroundColor = color + "33";     // прозорий фон того самого кольору
+        dot.dataset.label = m.item || "";
+        markerLayer.appendChild(dot);
+      });
+    }
+
+  if (thumbs.length && mainImage) {
+    thumbs.forEach(t => {
+      t.addEventListener("click", () => {
+        thumbs.forEach(x => x.classList.remove("active"));
+        t.classList.add("active");
+
+        mainImage.src = t.dataset.full;
+        mainImage.dataset.imageId = t.dataset.imageId || "";
+
+        if (annotateBtn && t.dataset.imageId) {
+          annotateBtn.href = "{% url 'annotate_order_image' 0 %}"
+            .replace("/0/", `/${t.dataset.imageId}/`);
+        }
+
+        renderMarkers(mainImage.dataset.imageId);
+      });
+    });
+
+    renderMarkers(mainImage.dataset.imageId || "");
+  }
+
+  const categoryToggles = document.querySelectorAll(".category-toggle-btn, .category-header");
+  categoryToggles.forEach(el => {
+    el.addEventListener("click", () => {
+      const targetId = el.getAttribute("data-target");
+      if (!targetId) return;
+      const body = document.getElementById(targetId);
+      if (!body) return;
+
+      const btn = document.querySelector(`.category-toggle-btn[data-target="${targetId}"]`);
+      if (!btn) return;
+
+      const textSpan = btn.querySelector(".text");
+
+      body.classList.toggle("collapsed");
+      btn.classList.toggle("collapsed");
+
+      if (body.classList.contains("collapsed")) {
+        if (textSpan) textSpan.textContent = "Розгорнути";
+      } else {
+        if (textSpan) textSpan.textContent = "Згорнути";
+      }
+    });
+  });
+
+  const select    = document.getElementById("existingCustomerSelect");
+  const newFields = document.getElementById("newCustomerFields");
+  const saveBtn   = document.getElementById("saveNewCustomerBtn");
+
+  if (select && newFields && saveBtn) {
+    select.addEventListener("change", () => {
+      if (select.value === "") {
+        newFields.style.display = "flex";
+        saveBtn.style.display   = "block";
+      } else {
+        newFields.style.display = "none";
+        saveBtn.style.display   = "none";
+      }
+    });
+  }
+});
+
+// 🔍 Зум + перетягування (рухаємо весь mainImageInner разом з мітками)
+(function () {
+  const wrapper = document.getElementById("mainImageWrapper");
+  const inner   = document.getElementById("mainImageInner");
+  if (!wrapper || !inner) return;
+
+  let scale = 1;
+  const MIN_SCALE = 1;
+  const MAX_SCALE = 4;
+  let posX = 0;
+  let posY = 0;
+
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+
+  function updateTransform() {
+    inner.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
+  }
+
+  wrapper.addEventListener('wheel', (e) => {
+    e.preventDefault();
+
+    const delta = e.deltaY < 0 ? 0.15 : -0.15;
+    const prevScale = scale;
+    scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale + delta));
+
+    const rect = wrapper.getBoundingClientRect();
+    const offsetX = e.clientX - rect.left;
+    const offsetY = e.clientY - rect.top;
+
+    const dx = offsetX - rect.width / 2;
+    const dy = offsetY - rect.height / 2;
+
+    const scaleRatio = scale / prevScale;
+
+    posX = posX * scaleRatio + dx * (scaleRatio - 1);
+    posY = posY * scaleRatio + dy * (scaleRatio - 1);
+
+    if (scale === MIN_SCALE) {
+      posX = 0;
+      posY = 0;
+    }
+
+    updateTransform();
+  }, { passive: false });
+
+  wrapper.addEventListener('mousedown', (e) => {
+    if (scale === MIN_SCALE) return;
+    isDragging = true;
+    wrapper.classList.add('dragging');
+    dragStartX = e.clientX - posX;
+    dragStartY = e.clientY - posY;
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    posX = e.clientX - dragStartX;
+    posY = e.clientY - dragStartY;
+    updateTransform();
+  });
+
+  document.addEventListener('mouseup', () => {
+    isDragging = false;
+    wrapper.classList.remove('dragging');
+  });
+
+  wrapper.addEventListener('touchstart', (e) => {
+    if (scale === MIN_SCALE) return;
+    const touch = e.touches[0];
+    isDragging = true;
+    wrapper.classList.add('dragging');
+    dragStartX = touch.clientX - posX;
+    dragStartY = touch.clientY - posY;
+  }, { passive: true });
+
+  wrapper.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    const touch = e.touches[0];
+    posX = touch.clientX - dragStartX;
+    posY = touch.clientY - dragStartY;
+    updateTransform();
+  }, { passive: true });
+
+  wrapper.addEventListener('touchend', () => {
+    isDragging = false;
+    wrapper.classList.remove('dragging');
+  });
+})();
+</script>
+{% endblock %}

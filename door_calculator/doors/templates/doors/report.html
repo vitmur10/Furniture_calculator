@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+  <h2 class="fw-bold mb-4 text-center">📈 Звіт по замовленнях</h2>
+
+  <form method="get" class="card p-3 shadow-sm mb-4">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-4">
+        <label class="form-label fw-bold">З дати</label>
+        <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-bold">По дату</label>
+        <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+      </div>
+      <div class="col-md-4 text-end mt-3">
+        <button class="btn btn-primary">🔍 Показати</button>
+        <a href="?export=excel&start_date={{ start_date }}&end_date={{ end_date }}" class="btn btn-success">📥 Експорт Excel</a>
+      </div>
+    </div>
+  </form>
+
+  {% if orders %}
+  <div class="card shadow-sm">
+    <table class="table table-striped align-middle mb-0">
+      <thead class="table-primary">
+        <tr>
+          <th>№</th>
+          <th>Замовлення</th>
+          <th>Статус</th>
+          <th>К/С</th>
+          <th>Вартість (грн)</th>
+          <th>Виконано (%)</th>
+          <th>Дата</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in orders %}
+        <tr class="{% if o.status == 'postponed' %}table-warning{% elif o.status == 'completed' %}table-success{% endif %}">
+          <td>{{ forloop.counter }}</td>
+          <td>№{{ o.order_number }}</td>
+          <td>{{ o.get_status_display }}</td>
+          <td>{{ o.total_ks }}</td>
+          <td>{{ o.total_cost }}</td>
+          <td>{{ o.completion_percent }}%</td>
+          <td>{{ o.created_at|date:"d.m.Y" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="mt-4">
+    <h5 class="fw-bold">📊 Підсумки:</h5>
+    <ul class="list-group">
+      <li class="list-group-item">Всього замовлень: {{ orders.count }}</li>
+      <li class="list-group-item">Активні: {{ active_orders.count }} | Відкладені: {{ postponed_orders.count }}</li>
+      <li class="list-group-item">Загальна вартість: <strong>{{ total_value|floatformat:2 }} грн</strong></li>
+      <li class="list-group-item">Середній % виконання: <strong>{{ avg_progress|floatformat:1 }}%</strong></li>
+    </ul>
+  </div>
+  {% else %}
+  <div class="alert alert-info mt-4 text-center">Немає замовлень за вказаний період</div>
+  {% endif %}
+</div>
+{% endblock %}
