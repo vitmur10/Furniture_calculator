@@ -1,6 +1,27 @@
 from django.db import models
 from django.contrib.auth.models import User
 
+class OrderNameDirectory(models.Model):
+    name = models.CharField(
+        "Назва замовлення",
+        max_length=255,
+        unique=True,
+        help_text="Шаблонна назва замовлення, напр. 'Двері в квартиру', 'Комплексні двері на об'єкт'"
+    )
+    description = models.TextField(
+        "Опис / примітка",
+        blank=True,
+        null=True,
+        help_text="За бажанням: де використовується, які особливості"
+    )
+
+    class Meta:
+        verbose_name = "Назва замовлення (довідник)"
+        verbose_name_plural = "Назви замовлень (довідник)"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
 
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Назва категорії")
@@ -199,6 +220,14 @@ class Order(models.Model):
         related_name="orders",
         verbose_name="Замовник",
     )
+    order_name = models.CharField(
+        "Назва замовлення",
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Напр.: 'Двері на квартиру 12, під'їзд 3'"
+    )
+
     order_number = models.CharField(max_length=50, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     total_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)

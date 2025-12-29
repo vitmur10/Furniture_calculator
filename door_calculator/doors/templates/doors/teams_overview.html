@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+  <h2 class="mb-3">Microsoft Teams інтеграція</h2>
+
+  <p class="text-muted">
+    Підключено як: <strong>{{ me.displayName }}</strong>
+    {% if me.mail %} ({{ me.mail }}){% endif %}
+  </p>
+
+  {% if teams %}
+    {% for t in teams %}
+      <div class="card mb-3">
+        <div class="card-header">
+          <strong>{{ t.name }}</strong> ({{ t.id }})
+        </div>
+        <div class="card-body">
+          {% if t.channels %}
+            <ul class="mb-0">
+              {% for ch in t.channels %}
+                <li>
+                  <strong>{{ ch.displayName }}</strong>
+                  <small class="text-muted">({{ ch.id }})</small>
+                </li>
+              {% endfor %}
+            </ul>
+          {% else %}
+            <p class="text-muted mb-0">Немає каналів або немає доступу.</p>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="alert alert-info">
+      Немає доступних команд (або користувач не доданий до жодної).
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

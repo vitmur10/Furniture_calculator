@@ -3,32 +3,33 @@ import os
 from datetime import datetime, timedelta, date
 from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
-from django.views.decorators.http import require_POST
 from django.conf import settings
 from django.contrib import messages
-from django.db import models
-from django.db.models import Avg, Sum, Q
-from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest
+from django.contrib.auth.decorators import login_required, user_passes_test
+from django.db.models import Sum, Q
+from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest, FileResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from openpyxl import Workbook
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
 from .forms import OrderProgressForm
 from .models import (
     Category, Product, Addition, Coefficient, Rate,
     Order, OrderItem, AdditionItem, WorkLog, Worker,
-    OrderProgress, ItemProgress, OrderImage, CompanyInfo, OrderFile, Customer, OrderImageMarker,
+    OrderProgress, OrderImage, CompanyInfo, OrderFile, Customer, OrderImageMarker, OrderNameDirectory
 )
-from django.contrib.auth.decorators import login_required, user_passes_test
-from django.http import HttpResponseForbidden
+import msal
+import requests
 
 
 def superuser_only(view_func):
@@ -84,7 +85,42 @@ def _recalc_order_totals(order: Order):
 
 def order_list(request):
     orders = Order.objects.all().order_by("-created_at")
-    return render(request, "doors/order_list.html", {"orders": orders})
+
+    start_date = request.GET.get("start_date") or ""
+    end_date = request.GET.get("end_date") or ""
+    status = request.GET.get("status") or ""
+    status_finance = request.GET.get("status_finance") or ""
+    order_name = request.GET.get("order_name") or ""
+
+    if start_date:
+        orders = orders.filter(created_at__date__gte=start_date)
+    if end_date:
+        orders = orders.filter(created_at__date__lte=end_date)
+    if status:
+        orders = orders.filter(status=status)
+    if status_finance:
+        orders = orders.filter(status_finance=status_finance)
+    if order_name:
+        # фільтр по точній назві з дропдауну
+        orders = orders.filter(order_name=order_name)
+
+    # 🔹 Список доступних назв замовлень для фільтра (тільки не пусті)
+    order_name_choices = (
+        Order.objects
+        .exclude(order_name__isnull=True)
+        .exclude(order_name__exact="")
+        .values_list("order_name", flat=True)
+        .distinct()
+        .order_by("order_name")
+    )
+
+    context = {
+        "orders": orders,
+        "status_choices": Order.STATUS_CHOICES,
+        "status_finance_choices": Order.STATUS_CHOICES_FINANCE,
+        "order_name_choices": order_name_choices,  # 👈 додаємо
+    }
+    return render(request, "doors/order_list.html", context)
 
 
 @csrf_exempt
@@ -302,7 +338,7 @@ def calculate_order(request, order_id):
 
         return redirect("calculate_order", order_id=order.id)
 
-    # 1.6 Додавання позиції (основна форма)
+        # 1.6 Додавання позиції (основна форма)
     if request.method == "POST":
         # щоб не зачепити інші форми
         if (
@@ -312,6 +348,29 @@ def calculate_order(request, order_id):
                 and "delete_file" not in request.POST
                 and "assign_customer" not in request.POST
         ):
+            # 🔹 1) Оновлюємо назву замовлення / шаблон
+            order_name = (request.POST.get("order_name") or "").strip()
+            order_name_template_id = request.POST.get("order_name_template") or ""
+
+            fields_to_update = []
+
+            if order_name_template_id:
+                tpl = OrderNameDirectory.objects.filter(id=order_name_template_id).first()
+                if tpl:
+                    order.order_name_template = tpl
+                    fields_to_update.append("order_name_template")
+                    # якщо вручну нічого не ввели — підставляємо текст із довідника
+                    if not order_name:
+                        order_name = tpl.name
+
+            if order_name:
+                order.order_name = order_name
+                fields_to_update.append("order_name")
+
+            if fields_to_update:
+                order.save(update_fields=fields_to_update)
+
+            # 🔹 2) Додаємо позицію як і раніше
             name = request.POST.get("name") or "Позиція"
             item_qty = max(1, int(request.POST.get("item_qty", 1)))
 
@@ -356,24 +415,40 @@ def calculate_order(request, order_id):
     formula_terms = []  # список значень effective_ks кожної позиції
 
     for it in items:
-        # колір позиції (щоб потім використовувати і в мітках/лейблах)
         it.color_hex = get_item_color(it.id)
 
-        ks_raw = it.total_ks() if callable(getattr(it, "total_ks", None)) else None
+        # 1) базові КС по виробах (products.base_ks)
+        products_ks = sum(
+            (Decimal(str(p.base_ks or 0)) for p in it.products.all()),
+            Decimal("0")
+        )
 
-        base_ks = Decimal("0")
-        coeff = Decimal("1")
+        # 2) КС по доповненнях (AdditionItem.total_ks())
+        adds_ks = sum(
+            (Decimal(str(ai.total_ks() or 0)) for ai in it.addition_items.all()),
+            Decimal("0")
+        )
 
-        # ВАЖЛИВО: у тебе total_ks() повертає (base_ks, coeff_multiplier),
-        # бо в шаблоні показується: "base × coeff"
-        if isinstance(ks_raw, (tuple, list)) and len(ks_raw) >= 2:
-            base_ks = Decimal(str(ks_raw[0] or 0))
-            coeff = Decimal(str(ks_raw[1] or 1))
-        elif ks_raw is not None:
-            base_ks = Decimal(str(ks_raw or 0))
-            coeff = Decimal("1")
+        # 3) кількість позицій
+        qty = Decimal(str(it.quantity or 1))
 
-        ks_effective = (base_ks * coeff).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        # 4) коефіцієнт (добуток)
+        coef = Decimal("1.0")
+        for c in it.coefficients.all():
+            coef *= Decimal(str(c.value or 1))
+
+        # 5) підсумки
+        ks_base = (products_ks + adds_ks) * qty
+        ks_effective = (ks_base * coef).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Кладемо в обʼєкт, щоб у шаблоні показувати “повний розрахунок”
+        it.ks_products = products_ks.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        it.ks_adds = adds_ks.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        it.ks_qty = int(qty)  # для відображення
+        it.ks_coef = coef.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        it.ks_base = ks_base.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        it.ks_effective = ks_effective
+
         effective_ks += ks_effective
         formula_terms.append(f"{ks_effective:.2f}")
 
@@ -404,7 +479,7 @@ def calculate_order(request, order_id):
             }
             for m in markers_qs
         ]
-
+    order_name_templates = OrderNameDirectory.objects.all().order_by("name")
     context = {
         "order": order,
         "categories": categories,
@@ -416,10 +491,10 @@ def calculate_order(request, order_id):
         "total": total_sum,
         "customers": customers,
         "markers_by_image": markers_by_image,
-
         # 🔥 для блоку формули
         "effective_ks": effective_ks,
         "formula_expression": formula_expression,
+        "order_name_templates": order_name_templates,
     }
     return render(request, "doors/calculate_order.html", context)
 
@@ -596,6 +671,20 @@ def generate_pdf(request, order_id):
         except Exception:
             return Decimal(default)
 
+    def extract_ks_from_obj(obj):
+        """
+        Пробуємо дістати загальну кількість КС з обʼєкта (Order або OrderItem).
+        Підтримує варіанти total_ks(), total_ks, ks_total і т.п.
+        Якщо нічого немає — повертає 0.
+        """
+        for attr in ("total_ks", "total_ks_cached", "ks_total", "total_ks_value"):
+            if hasattr(obj, attr):
+                val = getattr(obj, attr)
+                if callable(val):
+                    val = val()
+                return to_decimal(val, "0")
+        return Decimal("0")
+
     # ---------- GET params ----------
     markup_percent = to_decimal(request.GET.get("markup"), "0")
     delivery = to_decimal(request.GET.get("delivery"), "0")
@@ -611,6 +700,7 @@ def generate_pdf(request, order_id):
     # ---------- базова сума (без націнки) ----------
     base_without_markup = Decimal("0")
     item_costs = []
+
     for it in items:
         raw = it.total_cost() if callable(it.total_cost) else it.total_cost
         raw_dec = to_decimal(raw, "0")
@@ -626,6 +716,34 @@ def generate_pdf(request, order_id):
     final_total = (base_with_markup + delivery + packing).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
+
+    # ---------- розрахунок орієнтовного терміну виготовлення ----------
+    # 1) спершу пробуємо взяти КС з order
+    total_ks = extract_ks_from_obj(order)
+
+    # 2) якщо там 0 — пробуємо сумувати з позицій
+    if total_ks <= 0:
+        total_ks_sum = Decimal("0")
+        for it in items:
+            total_ks_sum += extract_ks_from_obj(it)
+        total_ks = total_ks_sum
+
+    production_days = None
+    if total_ks > 0:
+        # 0.75 кс = 1 година роботи 1 працівника
+        hours_total = (total_ks / Decimal("0.75"))
+
+        # в середньому 2 працівники по 8 годин
+        hours_per_day_all_workers = Decimal("2") * Decimal("8")  # 16 год/день
+
+        days_raw = hours_total / hours_per_day_all_workers
+        days_with_margin = days_raw * Decimal("1.3")  # +30%
+
+        production_days = int(
+            days_with_margin.to_integral_value(rounding=ROUND_HALF_UP)
+        )
+        if production_days < 1:
+            production_days = 1
 
     # ---------- старт PDF ----------
     buffer = BytesIO()
@@ -685,14 +803,33 @@ def generate_pdf(request, order_id):
     p.setFont(base_font, 11)
     p.drawString(40, title_y - 20, f"Замовлення №: {order.order_number}")
     p.drawString(40, title_y - 38, f"Дата: {order.created_at.strftime('%d.%m.%Y')}")
-    # 🔥 вставляємо імʼя клієнта
+
+    # Замовник (і для шапки, і для назви файлу)
+    customer_name = ""
     if hasattr(order, "customer") and order.customer:
-        p.drawString(40, title_y - 56, f"Замовник: {order.customer.name}")
+        # твій старий варіант – явно .name
+        if hasattr(order.customer, "name") and order.customer.name:
+            customer_name = order.customer.name
+        else:
+            customer_name = str(order.customer)
+
+        p.drawString(40, title_y - 56, f"Замовник: {customer_name}")
     else:
         p.drawString(40, title_y - 56, "Замовник: ____________________")
 
+    # Кількість позицій — тільки у спрощеній версії
+    positions_count = items.count()
+    header_bottom_offset = 80
+    if simple_mode:
+        p.drawString(
+            40,
+            title_y - 74,
+            f"Кількість позицій у замовленні: {positions_count}",
+        )
+        header_bottom_offset = 100
+
     # верхній рівень для вмісту
-    content_top_y = title_y - 80
+    content_top_y = title_y - header_bottom_offset
     current_y = content_top_y
 
     # ---------- ОСНОВНА ТАБЛИЦЯ (лише для детального) ----------
@@ -807,10 +944,15 @@ def generate_pdf(request, order_id):
     text.setFont(base_font, 9)
     text.setLeading(12)
 
+    if production_days is not None:
+        term_line = f"Орієнтовний термін виготовлення {production_days} робочих днів."
+    else:
+        term_line = "Орієнтовний термін виготовлення __________ робочих днів."
+
     text_lines = [
-        "Орієнтовний термін виготовлення __________ робочих днів.",
-        "Дата початку робіт призначається за наявності матеріалу та",
-        "проєкту на виготовлення замовлення.",
+        term_line,
+        "Дата початку робіт призначається за наявності матеріалу та проєкту",
+        "на виготовлення замовлення і залежить від завантаження виробництва",
         "Якщо в процесі перевірки креслення виявиться, що не повністю",
         "розкритий обсяг робіт, невраховані роботи додатково збільшать",
         "вартість проєкту.",
@@ -827,9 +969,26 @@ def generate_pdf(request, order_id):
     p.save()
 
     buffer.seek(0)
+
+    # Формуємо ім'я файлу: номер + замовник (якщо є)
+    if customer_name:
+        safe_name = customer_name.strip().replace(" ", "_")
+        filename = f"order_{order.order_number}_{safe_name}.pdf"
+    else:
+        filename = f"order_{order.order_number}.pdf"
+
+    # 🔹 Режим завантаження (без попереднього перегляду)
+    if request.GET.get("download") == "1":
+        return FileResponse(
+            buffer,
+            as_attachment=True,
+            filename=filename,
+            content_type="application/pdf",
+        )
+
+    # 🔹 Режим перегляду (inline)
     response = HttpResponse(buffer, content_type="application/pdf")
-    filename = f"order_{order.order_number}.pdf"
-    response["Content-Disposition"] = f'inline; filename=\"{filename}\"'
+    response["Content-Disposition"] = f'inline; filename="{filename}"'
     return response
 
 
@@ -1067,23 +1226,170 @@ def report_period_view(request):
     norm_hours = Decimal(work_days * 8) * Decimal("0.75")
     percent_done = (total_all / norm_hours * Decimal("100")) if norm_hours > 0 else Decimal("0")
 
-    return render(
-        request,
-        "doors/report_period.html",
-        {
-            "start_date": start_date,
-            "end_date": end_date,
-            "orders": orders,
-            "workers": workers,
-            "table": table,
-            "totals_orders": totals_orders,
-            "totals_workers": totals_workers,
-            "total_all": total_all,
-            "work_days": work_days,
-            "norm_hours": norm_hours,
-            "percent_done": percent_done,
-        },
-    )
+    context = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "orders": orders,
+        "workers": workers,
+        "table": table,
+        "totals_orders": totals_orders,
+        "totals_workers": totals_workers,
+        "total_all": total_all,
+        "work_days": work_days,
+        "norm_hours": norm_hours,
+        "percent_done": percent_done,
+    }
+
+    # ===== Якщо просили PDF =====
+    if request.GET.get("export") == "pdf" and table:
+        buffer = BytesIO()
+
+        # Шрифт як у generate_pdf
+        font_path = os.path.join(
+            settings.BASE_DIR, "doors", "static", "fonts", "DejaVuSerif.ttf"
+        )
+        if os.path.exists(font_path):
+            pdfmetrics.registerFont(TTFont("DejaVuSerif", font_path))
+            base_font = "DejaVuSerif"
+        else:
+            base_font = "Helvetica"
+
+        # сторінка A4 в альбомній орієнтації
+        page_size = landscape(A4)
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=page_size,
+            leftMargin=20,
+            rightMargin=20,
+            topMargin=40,
+            bottomMargin=30,
+        )
+
+        styles = getSampleStyleSheet()
+        styles["Normal"].fontName = base_font
+        styles["Normal"].fontSize = 7
+        styles["Heading2"].fontName = base_font
+        styles["Heading2"].fontSize = 12
+
+        story = []
+
+        # ----- Заголовок -----
+        title = (
+            f"Звіт виробітку за період "
+            f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
+        )
+        story.append(Paragraph(title, styles["Heading2"]))
+        story.append(Spacer(1, 8))
+
+        # ----- Табличні дані -----
+        header = (
+                ["Дата"]
+                + [f"№{o}" for o in orders]
+                + list(workers)
+                + ["Σ год за день"]
+        )
+        table_data = [header]
+
+        for row in table:
+            row_cells = []
+            row_date = row["date"]
+            row_cells.append(row_date.strftime("%d.%m"))
+
+            # замовлення – %
+            for o in orders:
+                val = row.get(o, 0.0)
+                try:
+                    val = float(val)
+                except Exception:
+                    val = 0.0
+                row_cells.append(f"{val:.1f}")
+
+            # працівники – години
+            for w in workers:
+                val = row.get(w, Decimal("0"))
+                val = Decimal(str(val))
+                row_cells.append(f"{val:.1f}")
+
+            # Σ за день
+            day_total = Decimal(str(row.get("total", 0)))
+            row_cells.append(f"{day_total:.1f}")
+
+            table_data.append(row_cells)
+
+        # Підсумковий рядок
+        summary_row = ["Σ за період"]
+        for o in orders:
+            val = totals_orders.get(o, 0.0)
+            summary_row.append(f"{val:.1f}%")
+        for w in workers:
+            val = totals_workers.get(w, Decimal("0"))
+            val = Decimal(str(val))
+            summary_row.append(f"{val:.1f}")
+        summary_row.append(f"{total_all:.1f}")
+        table_data.append(summary_row)
+
+        col_count = len(header)
+
+        # Розрахунок ширини колонок по всій доступній ширині
+        page_width, page_height = page_size
+        available_width = page_width - doc.leftMargin - doc.rightMargin
+        col_width = available_width / col_count
+        col_widths = [col_width] * col_count
+
+        report_table = Table(
+            table_data,
+            colWidths=col_widths,
+            repeatRows=1,  # шапка повторюється на кожній сторінці
+        )
+        report_table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                    ("FONTNAME", (0, 0), (-1, -1), base_font),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+                    ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e3f2fd")),
+                    ("BACKGROUND", (0, len(table_data) - 1), (-1, len(table_data) - 1), colors.lightgrey),
+                ]
+            )
+        )
+
+        story.append(report_table)
+        story.append(Spacer(1, 12))
+
+        # ----- Підсумки під таблицею -----
+        story.append(
+            Paragraph(f"Кількість днів у періоді: <b>{work_days}</b>", styles["Normal"])
+        )
+        story.append(
+            Paragraph(f"Загалом виконано: <b>{total_all:.1f} год</b>", styles["Normal"])
+        )
+        story.append(
+            Paragraph(
+                f"Норма (дні × 8 × 0.75): <b>{norm_hours:.1f} год</b>",
+                styles["Normal"],
+            )
+        )
+        story.append(
+            Paragraph(
+                f"Виконано від норми: <b>{percent_done:.1f}%</b>",
+                styles["Normal"],
+            )
+        )
+
+        # Генеруємо PDF
+        doc.build(story)
+
+        buffer.seek(0)
+        filename = f"work_report_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
+        response = HttpResponse(buffer, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
+        return response
+
+    # Якщо PDF не просили — повертаємо HTML
+    return render(request, "doors/report_period.html", context)
 
 
 def worklog_add(request):
@@ -1442,3 +1748,24 @@ def annotate_order_image(request, image_id):
         "markers": markers,  # піде в JS як initialMarkers
     }
     return render(request, "doors/annotate_order_image.html", context)
+
+
+@csrf_exempt
+def add_order_name(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request"}, status=400)
+
+    data = json.loads(request.body)
+    name = data.get("name", "").strip()
+
+    if not name:
+        return JsonResponse({"error": "Empty name"}, status=400)
+
+    tpl, created = OrderNameDirectory.objects.get_or_create(name=name)
+
+    return JsonResponse({"id": tpl.id, "name": tpl.name})
+
+
+"""Teams"""
+
+

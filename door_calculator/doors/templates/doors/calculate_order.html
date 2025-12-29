@@ -1,6 +1,30 @@
 {% extends 'base.html' %}
 {% block content %}
 <style>
+
+
+  .products-columns {
+    column-count: 2;
+    column-gap: 24px;
+  }
+
+  .addons-columns {
+    column-count: 2;
+    column-gap: 24px;
+  }
+
+  .products-columns > *,
+  .addons-columns > * {
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid;
+  }
+
+  @media (max-width: 768px) {
+    .products-columns,
+    .addons-columns {
+      column-count: 1;
+    }
+  }
   .order-layout {
     display: flex;
     flex-wrap: nowrap;
@@ -504,17 +528,73 @@
         </div>
       </form>
     </div>
+    <div class="mb-3">
+      <label class="form-label fw-bold">Назва замовлення</label>
+
+      <div class="d-flex gap-2">
+        <!-- Поле тексту -->
+        <input type="text"
+               name="order_name"
+               id="orderNameInput"
+               class="form-control"
+               placeholder="Введіть назву або оберіть зі списку">
+
+        <!-- Випадаючий список довідника -->
+        <select name="order_name_template"
+                id="orderNameTemplateSelect"
+                class="form-select"
+                style="max-width: 220px;">
+          <option value="">— Обрати зі списку —</option>
+          {% for tpl in order_name_templates %}
+            <option value="{{ tpl.id }}">
+              {{ tpl.name }}
+            </option>
+          {% endfor %}
+        </select>
+
+        <!-- Кнопка створити -->
+        <button type="button"
+                id="addOrderNameBtn"
+                class="btn btn-outline-primary">
+          +
+        </button>
+      </div>
+
+      <div class="form-text small text-muted">
+        Обери з довідника, або введи свою назву і натисни ➕ щоб додати в список.
+      </div>
+    </div>
 
     <form method="post">
       {% csrf_token %}
-      <div class="mb-3">
-        <label class="form-label fw-bold">Назва позиції</label>
-        <input type="text" name="name" class="form-control"
-               placeholder="Наприклад: Двостулкові двері" required>
-      </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Назва / номер позиції</label>
+
+          <div class="d-flex gap-2">
+            <!-- Сюди підставлятимемо номер + назву категорії -->
+            <input type="text"
+                   name="name"
+                   id="positionNameInput"
+                   class="form-control"
+                   placeholder="Напр.: 1. Міжкімнатні двері (авто з категорії)"
+                   required>
+
+            <!-- Дропдаун з номерами, які можна клікати мишкою -->
+            <select id="positionNumberSelect"
+                    class="form-select"
+                    style="max-width: 110px;">
+              <option value="">№</option>
+              {# самі варіанти 1–50 додасть JS #}
+            </select>
+          </div>
+
+          <div class="form-text small text-muted">
+            Можна вписати свою назву, а можна просто вибрати номер — і поле заповниться "номер + категорія першого вибраного виробу".
+          </div>
+        </div>
 
       {% if categories %}
-      <div class="mb-3" id="productsByCategories" style="display:none;">
+      <div class="mb-3" id="productsByCategories"  class="products-columns" style="display:none;">
         <label class="form-label fw-bold">Оберіть вироби (по категоріях):</label>
         {% for cat in categories %}
           <div class="category-card border rounded p-3 mb-3">
@@ -532,7 +612,11 @@
             <div id="cat-body-{{ cat.id }}" class="category-body mt-2">
               {% for p in cat.products.all %}
                 <div class="product-option">
-                  <input type="checkbox" name="products" value="{{ p.id }}" class="form-check-input">
+                  <input type="checkbox"
+                         name="products"
+                         value="{{ p.id }}"
+                         class="form-check-input"
+                         data-category="{{ cat.name }}">
                   {% if p.image %}
                     <img src="{{ p.image.url }}" alt="{{ p.name }}">
                   {% else %}
@@ -549,11 +633,15 @@
       </div>
       {% endif %}
 
-      <div class="mb-3" id="productsFlatList">
+      <div id="productsFlatList" class="products-columns">
         <label class="form-label fw-bold">Оберіть вироби:</label>
         {% for p in products %}
         <div class="product-option">
-          <input type="checkbox" name="products" value="{{ p.id }}" class="form-check-input">
+          <input type="checkbox"
+                 name="products"
+                 value="{{ p.id }}"
+                 class="form-check-input"
+                 data-category="{{ p.category.name }}">
           {% if p.image %}
             <img src="{{ p.image.url }}" alt="{{ p.name }}">
           {% else %}
@@ -569,10 +657,10 @@
         <input type="number" name="item_qty" min="1" value="1" class="form-control" required>
       </div>
 
-      <div class="mb-3">
+      <div class="mb-3 addons-columns">
         <label class="form-label fw-bold">Доповнення (з кількістю):</label>
         {% for a in addons %}
-        <div class="input-group mb-2">
+        <div class="input-group mb-2 ">
           <div class="input-group-text">
             <input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
           </div>
@@ -602,41 +690,65 @@
     {% if items %}
       <div class="summary-table">
         <table class="table table-bordered text-center align-middle mb-0">
-          <thead>
-            <tr>
-              <th>Фото</th>
-              <th>Позиція</th>
-              <th>К/С</th>
-              <th>Ціна</th>
-              <th>Дія</th>
-            </tr>
-          </thead>
+            <thead>
+              <tr>
+                <th>№</th>
+                <th>Фото</th>
+                <th>Позиція</th>
+                <th>К/С (розрахунок)</th>
+                <th>Ціна</th>
+                <th>Дія</th>
+              </tr>
+            </thead>
           <tbody>
             {% for i in items %}
-            <tr>
-              <td>
-                {% with first_product=i.products.all|first %}
-                  {% if first_product and first_product.image %}
-                    <img src="{{ first_product.image.url }}" alt="{{ first_product.name }}">
-                  {% else %}
-                    <img src="https://via.placeholder.com/50x50?text=No+Img" alt="Без фото">
-                  {% endif %}
-                {% endwith %}
-              </td>
-              <td>
-                {{ i.name }}
-                {% if i.quantity and i.quantity|default:1 > 1 %}
-                  <span class="badge bg-light text-dark ms-1">× {{ i.quantity }}</span>
-                {% endif %}
-              </td>
-              <td>{{ i.total_ks.0|floatformat:2 }} × {{ i.total_ks.1|floatformat:2 }}</td>
-              <td>{{ i.total_cost|floatformat:2 }} грн</td>
-              <td>
-                <a href="{% url 'order_item_edit' i.id %}"
-                   class="btn btn-sm btn-outline-secondary">✏️ Редагувати</a>
-              </td>
-            </tr>
-            {% endfor %}
+                <tr>
+                  <!-- № -->
+                  <td class="fw-bold">{{ forloop.counter }}</td>
+
+                  <!-- Фото -->
+                  <td>
+                    {% with first_product=i.products.all|first %}
+                      {% if first_product and first_product.image %}
+                        <img src="{{ first_product.image.url }}" alt="{{ first_product.name }}">
+                      {% else %}
+                        <img src="https://via.placeholder.com/50x50?text=No+Img">
+                      {% endif %}
+                    {% endwith %}
+                  </td>
+
+                  <!-- Назва позиції -->
+                  <td>
+                    {{ i.name }}
+                    {% if i.quantity > 1 %}
+                      <span class="badge bg-light text-dark ms-1">× {{ i.quantity }}</span>
+                    {% endif %}
+                  </td>
+
+                  <!-- 🔥 К/С повний розрахунок -->
+                    <td class="text-start">
+                      ({{ i.ks_products|default:0|floatformat:2 }} + {{ i.ks_adds|default:0|floatformat:2 }})
+                      × {{ i.ks_qty|default:1 }}
+                      × {{ i.ks_coef|default:1|floatformat:2 }}
+                      =
+                      <strong>{{ i.ks_effective|default:0|floatformat:2 }}</strong> к/с
+                    </td>
+                  </td>
+
+                  <!-- Ціна -->
+                  <td class="fw-bold text-success">
+                    {{ i.total_cost|floatformat:2 }} грн
+                  </td>
+
+                  <!-- Дія -->
+                  <td>
+                    <a href="{% url 'order_item_edit' i.id %}"
+                       class="btn btn-sm btn-outline-secondary">
+                       ✏️
+                    </a>
+                  </td>
+                </tr>
+                {% endfor %}
           </tbody>
         </table>
       </div>
@@ -696,22 +808,36 @@
             <input type="number" id="packingCost" class="form-control" placeholder="200">
           </div>
         </div>
-        <div class="text-center mt-4">
-          <button id="calcFinalDetailed" class="btn btn-success me-2">
-            📄 Детальний документ
-          </button>
-          <button id="calcFinalShort" class="btn btn-outline-primary">
-            📄 Комерційна пропозиція
-          </button>
-        </div>
+            <div class="text-center mt-4">
+
+              <!-- Детальний PDF (перегляд) -->
+              <button id="calcFinalDetailed" class="btn btn-success me-2">
+                📄 Детальний (перегляд)
+              </button>
+
+              <!-- Детальний PDF (завант.) -->
+              <button id="calcFinalDetailedDownload" class="btn btn-success me-4">
+                💾 Детальний (завантажити)
+              </button>
+
+              <!-- Спрощений PDF (перегляд) -->
+              <button id="calcFinalShort" class="btn btn-outline-primary me-2">
+                📄 Комерційна пропозиція (перегляд)
+              </button>
+
+              <!-- Спрощений PDF (завант.) -->
+              <button id="calcFinalShortDownload" class="btn btn-outline-primary">
+                💾 Комерційна пропозиція (завантажити)
+              </button>
+
+            </div>
       </div>
     {% endif %}
   </div>
                     {% endif %}
 
 </div>
-
-{# ===== JS: дані міток для кожного зображення ===== #}
+{{# ===== JS: дані міток для кожного зображення ===== #}
 <script>
   const markersByImage = {
     {% for image_id, markers in markers_by_image.items %}
@@ -742,6 +868,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const blockCat = document.getElementById("productsByCategories");
   const blockFlat= document.getElementById("productsFlatList");
 
+  // Перемикання "по категоріях" / "плоский список"
   if (btnCat && btnFlat && blockFlat) {
     btnCat.addEventListener("click", () => {
       if (blockCat) blockCat.style.display = "block";
@@ -761,9 +888,11 @@ document.addEventListener("DOMContentLoaded", () => {
       btnCat.classList.remove("btn-primary");
     });
 
+    // за замовчуванням — плоский список
     btnFlat.click();
   }
 
+  // Згортання / показ ескізу
   if (toggleBtn && restoreBtn && sketchSection) {
     toggleBtn.addEventListener("click", () => {
       sketchSection.classList.add("collapsed");
@@ -778,28 +907,66 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Показ фінальної форми
   if (finishBtn && finalForm) {
     finishBtn.addEventListener("click", () => {
       finalForm.classList.toggle("visible");
     });
   }
 
-  const btnPdfDetailed = document.getElementById("calcFinalDetailed");
-  const btnPdfShort    = document.getElementById("calcFinalShort");
-  const pdfBaseUrl     = "{% url 'generate_pdf' order.id %}";
+  // ===== Кнопки PDF (перегляд + завантаження) =====
+  const btnPdfDetailed          = document.getElementById("calcFinalDetailed");
+  const btnPdfDetailedDownload  = document.getElementById("calcFinalDetailedDownload");
+  const btnPdfShort             = document.getElementById("calcFinalShort");
+  const btnPdfShortDownload     = document.getElementById("calcFinalShortDownload");
+  const pdfBaseUrl              = "{% url 'generate_pdf' order.id %}";
 
-  function openPdf(isSimple) {
+  function buildPdfUrl({ isSimple, download }) {
     const markupVal   = parseFloat(document.getElementById("markup")?.value || 0) || 0;
     const deliveryVal = parseFloat(document.getElementById("deliveryCost")?.value || 0) || 0;
     const packingVal  = parseFloat(document.getElementById("packingCost")?.value  || 0) || 0;
 
     let url = `${pdfBaseUrl}?markup=${markupVal}&delivery=${deliveryVal}&packing=${packingVal}`;
-    if (isSimple) url += "&simple=1";
-    window.open(url, "_blank");
+    if (isSimple) {
+      url += "&simple=1";
+    }
+    if (download) {
+      url += "&download=1";
+    }
+    return url;
   }
 
-  if (btnPdfDetailed) btnPdfDetailed.addEventListener("click", () => openPdf(false));
-  if (btnPdfShort)    btnPdfShort.addEventListener("click", () => openPdf(true));
+  // Детальний — перегляд
+  if (btnPdfDetailed) {
+    btnPdfDetailed.addEventListener("click", () => {
+      const url = buildPdfUrl({ isSimple: false, download: false });
+      window.open(url, "_blank");
+    });
+  }
+
+  // Детальний — завантаження
+  if (btnPdfDetailedDownload) {
+    btnPdfDetailedDownload.addEventListener("click", () => {
+      const url = buildPdfUrl({ isSimple: false, download: true });
+      window.location.href = url;
+    });
+  }
+
+  // Комерційна пропозиція — перегляд
+  if (btnPdfShort) {
+    btnPdfShort.addEventListener("click", () => {
+      const url = buildPdfUrl({ isSimple: true, download: false });
+      window.open(url, "_blank");
+    });
+  }
+
+  // Комерційна пропозиція — завантаження
+  if (btnPdfShortDownload) {
+    btnPdfShortDownload.addEventListener("click", () => {
+      const url = buildPdfUrl({ isSimple: true, download: true });
+      window.location.href = url;
+    });
+  }
 
   // ---- Галерея + мітки ----
   const mainImage   = document.getElementById("mainImage");
@@ -807,24 +974,24 @@ document.addEventListener("DOMContentLoaded", () => {
   const thumbs      = document.querySelectorAll(".thumb-img");
   const annotateBtn = document.getElementById("annotateBtn");
 
-    function renderMarkers(imageId) {
-      if (!markerLayer) return;
-      markerLayer.innerHTML = "";
-      if (!imageId) return;
+  function renderMarkers(imageId) {
+    if (!markerLayer) return;
+    markerLayer.innerHTML = "";
+    if (!imageId) return;
 
-      const arr = markersByImage[imageId] || [];
-      arr.forEach(m => {
-        const dot = document.createElement("div");
-        dot.className = "marker-dot";
-        const color = m.color || "#ff4d4f";           // 🔴 беремо колір з БД
-        dot.style.left = m.x + "%";
-        dot.style.top  = m.y + "%";
-        dot.style.borderColor = color;
-        dot.style.backgroundColor = color + "33";     // прозорий фон того самого кольору
-        dot.dataset.label = m.item || "";
-        markerLayer.appendChild(dot);
-      });
-    }
+    const arr = markersByImage[imageId] || [];
+    arr.forEach(m => {
+      const dot = document.createElement("div");
+      dot.className = "marker-dot";
+      const color = m.color || "#ff4d4f";
+      dot.style.left = m.x + "%";
+      dot.style.top  = m.y + "%";
+      dot.style.borderColor = color;
+      dot.style.backgroundColor = color + "33";
+      dot.dataset.label = m.item || "";
+      markerLayer.appendChild(dot);
+    });
+  }
 
   if (thumbs.length && mainImage) {
     thumbs.forEach(t => {
@@ -847,6 +1014,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderMarkers(mainImage.dataset.imageId || "");
   }
 
+  // Аккордеони категорій
   const categoryToggles = document.querySelectorAll(".category-toggle-btn, .category-header");
   categoryToggles.forEach(el => {
     el.addEventListener("click", () => {
@@ -871,23 +1039,123 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  // ---- Замовник: існуючий / новий + автозбереження ----
+  const customerForm = document.getElementById("customerForm");
   const select    = document.getElementById("existingCustomerSelect");
   const newFields = document.getElementById("newCustomerFields");
   const saveBtn   = document.getElementById("saveNewCustomerBtn");
 
-  if (select && newFields && saveBtn) {
+  if (select && newFields && saveBtn && customerForm) {
+    // Показ/приховування полів нового замовника
     select.addEventListener("change", () => {
       if (select.value === "") {
+        // Створюємо нового
         newFields.style.display = "flex";
         saveBtn.style.display   = "block";
       } else {
+        // Обрали існуючого
         newFields.style.display = "none";
         saveBtn.style.display   = "none";
+        // 🔥 Автоматично відправляємо форму для збереження order.customer
+        customerForm.submit();
+      }
+    });
+  }
+
+  // ---- Вибір номера позиції + автопідстановка категорії ----
+  const posSelect = document.getElementById("positionNumberSelect");
+  const posInput  = document.getElementById("positionNameInput");
+
+  function updatePositionNameFromSelection() {
+    if (!posInput) return;
+
+    const firstChecked = document.querySelector('input[name="products"]:checked');
+    const categoryName = firstChecked ? (firstChecked.dataset.category || "") : "";
+
+    const num = posSelect && posSelect.value ? posSelect.value : "";
+
+    if (categoryName) {
+      posInput.value = (num ? num + ". " : "") + categoryName;
+    } else if (num) {
+      posInput.value = num;
+    }
+  }
+
+  if (posSelect && posInput) {
+    // створюємо опції 1–100
+    for (let i = 1; i <= 100; i++) {
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = i;
+      posSelect.appendChild(opt);
+    }
+
+    posSelect.addEventListener("change", updatePositionNameFromSelection);
+  }
+
+  const productCheckboxes = document.querySelectorAll('input[name="products"]');
+  productCheckboxes.forEach(cb => {
+    cb.addEventListener("change", updatePositionNameFromSelection);
+  });
+
+  // ---- Автопідстановка назви із довідника + додавання ----
+  const orderNameInput = document.getElementById("orderNameInput");
+  const orderNameTemplateSelect = document.getElementById("orderNameTemplateSelect");
+  const addBtn = document.getElementById("addOrderNameBtn");
+
+  if (orderNameTemplateSelect && orderNameInput) {
+    orderNameTemplateSelect.addEventListener("change", () => {
+      const text = orderNameTemplateSelect.selectedOptions[0].text;
+      if (orderNameTemplateSelect.value) {
+        orderNameInput.value = text;
+      }
+    });
+  }
+
+  if (addBtn && orderNameInput && orderNameTemplateSelect) {
+    addBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+
+      const newName = orderNameInput.value.trim();
+      if (!newName) {
+        alert("Спочатку введіть назву");
+        return;
+      }
+
+      try {
+        const response = await fetch("{% url 'add_order_name' %}", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": document.querySelector('[name=csrfmiddlewaretoken]').value
+          },
+          body: JSON.stringify({ name: newName })
+        });
+
+        if (!response.ok) {
+          alert("Помилка при додаванні");
+          return;
+        }
+
+        const data = await response.json();
+
+        const option = document.createElement("option");
+        option.value = data.id;
+        option.textContent = data.name;
+        orderNameTemplateSelect.appendChild(option);
+        orderNameTemplateSelect.value = data.id;
+
+        alert("Додано в довідник!");
+      } catch (e) {
+        console.error(e);
+        alert("Сталася помилка при додаванні.");
       }
     });
   }
 });
+</script>
 
+<script>
 // 🔍 Зум + перетягування (рухаємо весь mainImageInner разом з мітками)
 (function () {
   const wrapper = document.getElementById("mainImageWrapper");
@@ -978,4 +1246,5 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 })();
 </script>
+
 {% endblock %}

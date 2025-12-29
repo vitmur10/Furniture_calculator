@@ -11,11 +11,27 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
-
+import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID")
+AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID")
+AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET")
 
+AZURE_REDIRECT_URI = os.getenv(
+    "AZURE_REDIRECT_URI",
+    "http://localhost:8000/teams/callback/",
+)
+
+AZURE_AUTHORITY = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}"
+
+AZURE_SCOPES = [
+    "User.Read",
+    "Team.ReadBasic.All",
+    "Channel.ReadBasic.All",
+    "ChannelMessage.Read.All",
+]
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
@@ -25,7 +41,7 @@ SECRET_KEY = "django-insecure-fojb6-3@+u%rw5r2#)i5*3ra%4i-wd%2ne^*--(@vfa@b&-v0s
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["5d4c1183d548.ngrok-free.app", "localhost", "127.0.0.1"]
+ALLOWED_HOSTS = ["575fcfb3a526.ngrok-free.app", "localhost", "127.0.0.1"]
 
 CSRF_TRUSTED_ORIGINS = [
     "https://*.ngrok-free.app",

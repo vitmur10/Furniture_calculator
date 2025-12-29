@@ -1,0 +1,102 @@
+{% load custom_filters %}
+
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <title>Звіт виробітку {{ start_date|date:"d.m.Y" }} – {{ end_date|date:"d.m.Y" }}</title>
+  <style>
+    body {
+      font-family: DejaVu Sans, Arial, sans-serif;
+      font-size: 12px;
+    }
+    h3 {
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 10px;
+    }
+    th, td {
+      border: 1px solid #444;
+      padding: 4px;
+      text-align: center;
+    }
+    thead {
+      background: #e3f2fd;
+      font-weight: bold;
+    }
+    .summary {
+      margin-top: 10px;
+    }
+    .summary li {
+      margin-bottom: 3px;
+    }
+  </style>
+</head>
+<body>
+  <h3>Звіт виробітку за період {{ start_date|date:"d.m.Y" }} – {{ end_date|date:"d.m.Y" }}</h3>
+
+  {% if table %}
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="2">Дата</th>
+          <th colspan="{{ orders|length }}">Замовлення (% виконання)</th>
+          <th colspan="{{ workers|length }}">Працівники (год)</th>
+          <th rowspan="2">Σ год за день</th>
+        </tr>
+        <tr>
+          {% for o in orders %}
+            <th>№{{ o }}</th>
+          {% endfor %}
+          {% for w in workers %}
+            <th>{{ w }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table %}
+          <tr>
+            <td><strong>{{ row.date|date:"d.m" }}</strong></td>
+
+            {% for o in orders %}
+              <td>{{ row|get_item:o|floatformat:1 }}</td>
+            {% endfor %}
+
+            {% for w in workers %}
+              <td>{{ row|get_item:w|floatformat:1 }}</td>
+            {% endfor %}
+
+            <td><strong>{{ row.total|floatformat:1 }}</strong></td>
+          </tr>
+        {% endfor %}
+
+        <tr>
+          <td><strong>Σ за період</strong></td>
+          {% for o in orders %}
+            <td><strong>{{ totals_orders|get_item:o|floatformat:1 }}%</strong></td>
+          {% endfor %}
+          {% for w in workers %}
+            <td><strong>{{ totals_workers|get_item:w|floatformat:1 }}</strong></td>
+          {% endfor %}
+          <td><strong>{{ total_all|floatformat:1 }}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="summary">
+      <ul>
+        <li>Кількість днів у періоді: <strong>{{ work_days }}</strong></li>
+        <li>Загалом виконано: <strong>{{ total_all|floatformat:1 }} год</strong></li>
+        <li>Норма ({{ work_days }} × 8 × 0.75): <strong>{{ norm_hours|floatformat:1 }} год</strong></li>
+        <li>Виконано від норми: <strong>{{ percent_done|floatformat:1 }}%</strong></li>
+      </ul>
+    </div>
+  {% else %}
+    <p>Немає даних за вибраний період.</p>
+  {% endif %}
+</body>
+</html>

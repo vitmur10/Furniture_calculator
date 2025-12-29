@@ -2,7 +2,8 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
-
+from pathlib import Path
+from dotenv import load_dotenv
 
 def main():
     """Run administrative tasks."""
@@ -19,4 +20,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # завантажує .env з кореня проекту
+    env_path = Path(__file__).resolve().parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "door_calculator.settings")
     main()

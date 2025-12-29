@@ -20,10 +20,7 @@ urlpatterns = [
     path("order/item/<int:item_id>/edit/", views.order_item_edit, name="order_item_edit"),
     path("order/item/<int:item_id>/delete/", views.order_item_delete, name="order_item_delete"),
     path("order/<int:order_id>/delete/", views.delete_order, name="order_delete"),
-    path(
-        "order-image/<int:image_id>/annotate/",
-        views.annotate_order_image,
-        name="annotate_order_image",
-    ),
+    path("order-image/<int:image_id>/annotate/",views.annotate_order_image,name="annotate_order_image"),
+    path("order-name/add/", views.add_order_name, name="add_order_name"),
 ]
 

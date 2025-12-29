@@ -16,9 +16,20 @@
         <label class="form-label fw-bold">По дату</label>
         <input type="date" name="end_date" class="form-control" value="{{ end_date|date:'Y-m-d' }}">
       </div>
-      <div class="col-md-4 text-end mt-3">
-        <button class="btn btn-primary px-4">🔍 Показати</button>
-      </div>
+    <div class="col-md-4 text-end mt-3 d-flex justify-content-end gap-2">
+      <button type="submit" class="btn btn-primary px-4">
+        🔍 Показати
+      </button>
+
+      {% if table %}
+        <button type="submit"
+                name="export"
+                value="pdf"
+                class="btn btn-outline-secondary px-4">
+          ⬇️ PDF
+        </button>
+      {% endif %}
+    </div>
     </div>
   </form>
 

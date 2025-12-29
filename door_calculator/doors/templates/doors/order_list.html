@@ -3,17 +3,91 @@
 <div class="container py-5">
   <h2 class="fw-bold mb-4 text-center">📋 Список замовлень</h2>
 
+  <!-- 🔹 Форма фільтрів -->
+  <form method="get" class="card p-3 shadow-sm mb-4">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label fw-bold">З дати</label>
+        <input type="date"
+               name="start_date"
+               class="form-control"
+               value="{{ request.GET.start_date }}">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-bold">По дату</label>
+        <input type="date"
+               name="end_date"
+               class="form-control"
+               value="{{ request.GET.end_date }}">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-bold">Статус замовлення</label>
+        <select name="status" class="form-select">
+          <option value="">Усі</option>
+          {% for key, label in status_choices %}
+            <option value="{{ key }}"
+                    {% if request.GET.status == key %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      {% if request.user.is_superuser %}
+      <div class="col-md-3">
+        <label class="form-label fw-bold">Фінансовий статус</label>
+        <select name="status_finance" class="form-select">
+          <option value="">Усі</option>
+          {% for key, label in status_finance_choices %}
+            <option value="{{ key }}"
+                    {% if request.GET.status_finance == key %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <div class="col-md-3 d-flex justify-content-end mt-3 mt-md-0">
+        <!-- просто щоб кнопка не з'їжджала, якщо фіну статус не показуємо -->
+      </div>
+      {% endif %}
+
+      {# 🔹 Фільтр по назві замовлення (NEW) #}
+      <div class="col-md-4 mt-3">
+        <label class="form-label fw-bold">Назва замовлення</label>
+        <select name="order_name" class="form-select">
+          <option value="">Усі</option>
+          {% for name in order_name_choices %}
+            <option value="{{ name }}"
+                    {% if request.GET.order_name == name %}selected{% endif %}>
+              {{ name }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+
+      <div class="col-md-2 ms-auto text-end mt-3">
+        <button type="submit" class="btn btn-primary w-100">
+          🔍 Фільтрувати
+        </button>
+      </div>
+    </div>
+  </form>
+
   {% if orders %}
   <div class="table-responsive shadow-sm">
     <table class="table table-hover align-middle">
       <thead class="table-primary text-center">
         <tr>
           <th>№</th>
+          <th>Назва замовлення</th> {# NEW #}
           <th>Дата</th>
           <th>Позицій</th>
           <th>Вартість</th>
 
-          {# ✅ Статуси тільки суперюзеру #}
           {% if request.user.is_superuser %}
             <th>Статус</th>
             <th>Фінансовий статус</th>
@@ -21,7 +95,6 @@
 
           <th>Виконання</th>
 
-          {# ✅ Дії тільки суперюзеру (PDF/видалення) #}
           {% if request.user.is_superuser %}
             <th>Дії</th>
           {% else %}
@@ -35,6 +108,16 @@
 
         <tr class="{% if order.status == 'completed' %}table-success{% elif order.status == 'postponed' %}table-warning{% endif %}">
           <td><strong>{{ order.order_number }}</strong></td>
+
+          {# 🔹 Назва замовлення (NEW) #}
+          <td>
+            {% if order.order_name %}
+              {{ order.order_name }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+
           <td>{{ order.created_at|date:"d.m.Y" }}</td>
           <td>{{ order.items.count }}</td>
           <td>{{ order.total_cost|floatformat:2 }} грн</td>
