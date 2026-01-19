@@ -2,17 +2,37 @@
 {% block content %}
 
 <style>
-  .annotate-layout {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 20px;
-    padding: 20px;
-  }
+    .annotate-layout {
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+    }
 
-  .image-panel {
-    flex: 1 1 380px;
-    min-width: 320px;
-  }
+  .action-row{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+    }
+    .action-row .btn{
+      white-space: nowrap;
+    }
+
+    @media (max-width: 768px){
+      .action-row{
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .action-row .btn{
+        width: 100%;
+      }
+    }
+    .image-panel {
+      flex: 1 1 auto;
+      max-width: 680px;
+    }
 
   .image-wrapper {
     position: relative;
@@ -69,10 +89,11 @@
     white-space: nowrap;
   }
 
-  .info-panel {
-    flex: 0 0 320px;
-    max-width: 380px;
-  }
+    .info-panel {
+      flex: 0 0 360px;
+      position: sticky;
+      top: 20px; /* кнопки завжди видно */
+    }
 
   .markers-list {
     max-height: 360px;
@@ -136,7 +157,9 @@
     <!-- 🖼 ЛІВА ПАНЕЛЬ: ЗОБРАЖЕННЯ -->
     <div class="image-panel">
       <div class="image-wrapper" id="imageWrapper">
-        <img src="{{ image.image.url }}" alt="Фото замовлення" id="annotImg">
+        <img src="{{ image_url }}"
+             alt="Фото замовлення"
+             id="annotImg">
         <div class="marker-layer" id="markerLayer"></div>
       </div>
       <div class="hint-box mt-2">
@@ -151,7 +174,7 @@
     <div class="info-panel">
       <form method="post" id="markersForm">
         {% csrf_token %}
-        <input type="hidden" name="markers_json" id="markersJson">
+        <input type="hidden" id="markersJson" name="markers_json" value="[]"
 
         <div class="mb-3">
           <label class="form-label fw-bold">Позиція (виріб)</label>
@@ -193,14 +216,15 @@
           </div>
         </div>
 
-        <div class="d-flex justify-content-between mb-2">
-          <button type="button" class="btn btn-sm btn-outline-danger" id="resetCurrentItemBtn">
-            🧹 Скинути мітки для позиції
-          </button>
-          <button type="submit" class="btn btn-sm btn-primary">
-            💾 Зберегти мітки
-          </button>
-        </div>
+      <div class="action-row">
+        <button type="button" class="btn btn-sm btn-outline-danger" id="resetCurrentItemBtn">
+          🧹 Скинути мітки для позиції
+        </button>
+
+        <button type="submit" class="btn btn-sm btn-primary" id="saveMarkersBtn">
+          💾 Зберегти мітки
+        </button>
+      </div>
 
         <div class="mt-3">
           <h6 class="fw-bold">Мітки на фото:</h6>
@@ -210,21 +234,14 @@
     </div>
   </div>
 </div>
+{{ markers|json_script:"initial-markers" }}
 
 {# ===== JS: початкові мітки з бекенду ===== #}
 <script>
-  const initialMarkers = [
-    {% for m in markers %}
-      {
-        id: {{ m.id }},
-        x: {{ m.x|floatformat:2 }},
-        y: {{ m.y|floatformat:2 }},
-        item_id: {{ m.item_id|default:"null" }},
-        item_name: "{{ m.item_name|escapejs }}",
-        color: "{{ m.color }}"
-      }{% if not forloop.last %},{% endif %}
-    {% endfor %}
-  ];
+const initialMarkers = JSON.parse(
+  document.getElementById("initial-markers").textContent
+);
+let allMarkers = Array.isArray(initialMarkers) ? [...initialMarkers] : [];
 </script>
 
 <script>
@@ -241,7 +258,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const form = document.getElementById("markersForm");
 
   // усі мітки цього зображення
-  let allMarkers = Array.isArray(initialMarkers) ? [...initialMarkers] : [];
+    let allMarkers = Array.isArray(initialMarkers) ? [...initialMarkers] : [];
 
   // поточна позиція та колір
   let currentItemId = "";
@@ -405,20 +422,24 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // при сабміті форми серіалізуємо всі мітки
-  form.addEventListener("submit", (e) => {
-    markersJson.value = JSON.stringify(
-      allMarkers.map(m => ({
-        x: m.x,
-        y: m.y,
-        item_id: m.item_id,
-        color: m.color
-      }))
-    );
-  });
+form.addEventListener("submit", (e) => {
+  const payload = allMarkers.map(m => ({
+    x: m.x,
+    y: m.y,
+    item_id: m.item_id,
+    color: m.color
+  }));
+
+  markersJson.value = JSON.stringify(payload);
+
+  console.log("SUBMIT payload:", payload);
+  console.log("hidden markersJson.value:", markersJson.value);
+});
 
   // стартовий рендер
   renderMarkers();
 });
+
 </script>
 
 {% endblock %}

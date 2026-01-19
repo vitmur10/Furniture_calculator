@@ -7,7 +7,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Sum, Q
-from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest, FileResponse
+from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest, FileResponse, StreamingHttpResponse, Http404
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -21,15 +21,40 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-
+from doors.services.m365_graph import get_app_token
 from .forms import OrderProgressForm
 from .models import (
     Category, Product, Addition, Coefficient, Rate,
     Order, OrderItem, AdditionItem, WorkLog, Worker,
-    OrderProgress, OrderImage, CompanyInfo, OrderFile, Customer, OrderImageMarker, OrderNameDirectory
+    OrderProgress, OrderImage, CompanyInfo, OrderFile, Customer, OrderImageMarker, OrderNameDirectory, OrderItemProduct
 )
-import msal
 import requests
+from django.urls import reverse
+from django.views.decorators.clickjacking import xframe_options_exempt
+from django.utils.html import escape
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _debug_post(request, tag: str):
+    keys = list(request.POST.keys())
+    logger.warning("=== %s POST keys: %s", tag, keys)
+    # покажемо вибірково найважливіше
+    sample = {k: request.POST.getlist(k) for k in keys if k in (
+        "save_markup", "order_markup",
+        "bulk_coefficients", "bulk_scope", "bulk_mode",
+        "bulk_coeff_ids", "selected_item_ids"
+    ) or k.startswith("item_markup_")}
+    logger.warning("=== %s POST sample: %s", tag, sample)
+
+
+@login_required
+def delete_order_file(request, file_id):
+    of = get_object_or_404(OrderFile, id=file_id)
+    order_id = of.order_id
+    of.delete()
+    return redirect("calculate_order", order_id=order_id)
 
 
 def superuser_only(view_func):
@@ -163,26 +188,27 @@ def delete_order(request, order_id):
 def home(request):
     if request.method == "POST":
         order_number = request.POST.get("order_number")
-        main_sketch = request.FILES.get("sketch")
-        extra_images = request.FILES.getlist("images")  # ← до 50 фото
 
         if not order_number:
             messages.error(request, "Введіть номер замовлення")
             return redirect("home")
 
-        # створюємо замовлення
+        # Створюємо замовлення без фото (фото будуть з Teams)
         order = Order.objects.create(order_number=order_number)
 
-        # зберігаємо ГОЛОВНЕ фото
-        if main_sketch:
-            order.sketch = main_sketch
-            order.save()
+        # Прибрано: локальне завантаження фото
+        # main_sketch = request.FILES.get("sketch")
+        # extra_images = request.FILES.getlist("images")
+        # if main_sketch:
+        #     order.sketch = main_sketch
+        #     order.save()
+        # if extra_images:
+        #     for img in extra_images[:50]:
+        #         OrderImage.objects.create(order=order, image=img)
 
-        # зберігаємо додаткові фото
-        if extra_images:
-            for img in extra_images[:50]:
-                OrderImage.objects.create(order=order, image=img)
-
+        messages.info(request,
+                      "Замовлення створено. Використайте команду 'python manage.py sync_m365_orders' "
+                      "для синхронізації фото та файлів з Teams.")
         return redirect("calculate_order", order_id=order.id)
 
     return render(request, "doors/home.html")
@@ -216,98 +242,41 @@ def get_item_color(item_id: int | None) -> str:
 
 
 def calculate_order(request, order_id):
-    """
-    Сторінка розрахунку замовлення:
-    - додавання позицій
-    - завантаження фото
-    - завантаження/редагування/видалення додаткових файлів
-    - прив'язка замовника (новий або існуючий)
-    - вивід міток на фото (OrderImageMarker) на сторінці розрахунку
-    - формула з підставленими значеннями
-    - кольори для позицій/міток (до 100+)
-    """
     order = get_object_or_404(Order, id=order_id)
 
-    # 🔹 Категорії + список виробів (для плоского списку)
     categories = Category.objects.prefetch_related("products").all()
     products = Product.objects.all().select_related("category")
-
-    # 🔹 Усі фото замовлення (для галереї та міток)
     images = order.images.all()
 
-    # 🔹 Базова ціна за 1 к/с
     rate_obj = Rate.objects.first()
     price_per_ks = Decimal(str(rate_obj.price_per_ks)) if rate_obj else Decimal("0")
 
-    # ============================================================
-    # helpers: кольори
-    # ============================================================
+    # ---------------- helpers ----------------
     def _hsl_to_hex(h, s, l):
-        # h: 0..360, s/l: 0..1
         import colorsys
         r, g, b = colorsys.hls_to_rgb(h / 360.0, l, s)
         return "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
 
     def get_item_color(item_id: int) -> str:
-        """
-        Стабільний, "рознесений" колір по id.
-        Golden angle + високий saturation + 2 рівні lightness, щоб не зливалося.
-        """
         if not item_id:
             return "#ff4d4f"
-
-        # golden angle (≈137.508°) добре "розносить" відтінки
         hue = (item_id * 137.508) % 360
-
-        # уникаємо надто світлих/темних та "сірих"
-        sat = 0.80  # насиченість
-        # чергуємо яскравість, щоб сусідні відтінки відрізнялись сильніше
+        sat = 0.80
         light = 0.48 if (item_id % 2 == 0) else 0.62
-
         return _hsl_to_hex(hue, sat, light)
 
+    def _to_decimal_or_none(val: str):
+        val = (val or "").strip().replace(",", ".")
+        if val == "":
+            return None
+        return Decimal(val)
+
+    def _q2(x: Decimal) -> Decimal:
+        return x.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
     # ============================================================
-    # 1) POST (кілька форм на одній сторінці)
+    # POST: assign_customer
     # ============================================================
-
-    # 1.1 Завантаження фото (до 50)
-    if request.method == "POST" and "upload_images" in request.POST:
-        files = request.FILES.getlist("images")
-        for f in files[:50]:
-            OrderImage.objects.create(order=order, image=f)
-        return redirect("calculate_order", order_id=order.id)
-
-    # 1.2 Завантаження додаткових файлів
-    if request.method == "POST" and "upload_files" in request.POST:
-        files = request.FILES.getlist("files")
-        base_desc = (request.POST.get("files_desc") or "").strip()
-
-        for idx, f in enumerate(files[:50], start=1):
-            if base_desc:
-                desc = base_desc if len(files) == 1 else f"{base_desc} ({idx})"
-            else:
-                desc = f.name
-            OrderFile.objects.create(order=order, file=f, description=desc)
-
-        return redirect("calculate_order", order_id=order.id)
-
-    # 1.3 Оновлення підпису до файлу
-    if request.method == "POST" and "update_file" in request.POST:
-        file_id = request.POST.get("update_file")
-        new_desc = (request.POST.get("file_desc") or "").strip()
-        of = OrderFile.objects.filter(order=order, id=file_id).first()
-        if of:
-            of.description = new_desc or of.file.name
-            of.save()
-        return redirect("calculate_order", order_id=order.id)
-
-    # 1.4 Видалення файлу
-    if request.method == "POST" and "delete_file" in request.POST:
-        file_id = request.POST.get("delete_file")
-        OrderFile.objects.filter(order=order, id=file_id).delete()
-        return redirect("calculate_order", order_id=order.id)
-
-    # 1.5 Прив'язка / створення замовника
     if request.method == "POST" and "assign_customer" in request.POST:
         existing_id = request.POST.get("existing_customer") or ""
         customer = None
@@ -338,20 +307,85 @@ def calculate_order(request, order_id):
 
         return redirect("calculate_order", order_id=order.id)
 
-        # 1.6 Додавання позиції (основна форма)
+    # POST: bulk coefficients (додати коефіцієнти всім / вибірково)
+    # ============================================================
+    if request.method == "POST" and "bulk_coefficients" in request.POST:
+        _debug_post(request, "BULK_COEFFS")
+        coeff_ids = request.POST.getlist("bulk_coeff_ids")  # список коефів
+        scope = request.POST.get("bulk_scope", "all")  # all | selected
+        mode = request.POST.get("bulk_mode", "add")  # add | replace
+
+        selected_item_ids = request.POST.getlist("selected_item_ids")  # ids позицій
+
+        # Нема чого робити — просто перезавантажимо сторінку
+        if not coeff_ids:
+            return redirect("calculate_order", order_id=order.id)
+
+        coefs = list(Coefficient.objects.filter(id__in=coeff_ids))
+
+        target_qs = order.items.all()
+        if scope == "selected":
+            target_qs = target_qs.filter(id__in=selected_item_ids)
+
+        # ✅ режим:
+        # add     -> додає до вже існуючих
+        # replace -> заміняє на вибрані
+        if mode == "replace":
+            for it in target_qs:
+                it.coefficients.set(coefs)
+        else:
+            for it in target_qs:
+                it.coefficients.add(*coefs)
+
+        _recalc_order_totals(order)
+        return redirect("calculate_order", order_id=order.id)
+
+    # ============================================================
+    # POST: save_markup (глобальна + по позиціях)
+    # ============================================================
+    if request.method == "POST" and "save_markup" in request.POST:
+        _debug_post(request, "SAVE_MARKUP")
+
+        # 1) глобальна fallback-націнка
+        order_markup = _to_decimal_or_none(request.POST.get("order_markup"))
+        if order_markup is None:
+            order_markup = Decimal("0")
+
+        order.markup_percent = order_markup
+        order.save(update_fields=["markup_percent"])
+
+        # 2) індивідуальні націнки
+        for it in order.items.all():
+            key = f"item_markup_{it.id}"
+            raw = request.POST.get(key)
+
+            if raw is None:
+                continue
+            raw = raw.strip()
+            if raw == "":
+                continue
+
+            it.markup_percent = _to_decimal_or_none(raw)
+            it.save(update_fields=["markup_percent"])
+
+        _recalc_order_totals(order)
+        return redirect("calculate_order", order_id=order.id)
+
+    # ============================================================
+    # POST: add item
+    # ============================================================
     if request.method == "POST":
-        # щоб не зачепити інші форми
         if (
                 "upload_images" not in request.POST
                 and "upload_files" not in request.POST
                 and "update_file" not in request.POST
                 and "delete_file" not in request.POST
                 and "assign_customer" not in request.POST
+                and "save_markup" not in request.POST
+                and "bulk_coefficients" not in request.POST
         ):
-            # 🔹 1) Оновлюємо назву замовлення / шаблон
             order_name = (request.POST.get("order_name") or "").strip()
             order_name_template_id = request.POST.get("order_name_template") or ""
-
             fields_to_update = []
 
             if order_name_template_id:
@@ -359,7 +393,6 @@ def calculate_order(request, order_id):
                 if tpl:
                     order.order_name_template = tpl
                     fields_to_update.append("order_name_template")
-                    # якщо вручну нічого не ввели — підставляємо текст із довідника
                     if not order_name:
                         order_name = tpl.name
 
@@ -370,7 +403,6 @@ def calculate_order(request, order_id):
             if fields_to_update:
                 order.save(update_fields=fields_to_update)
 
-            # 🔹 2) Додаємо позицію як і раніше
             name = request.POST.get("name") or "Позиція"
             item_qty = max(1, int(request.POST.get("item_qty", 1)))
 
@@ -381,87 +413,159 @@ def calculate_order(request, order_id):
             item = OrderItem.objects.create(order=order, name=name, quantity=item_qty)
 
             if selected_products:
-                item.products.set(selected_products)
+                if selected_products:
+                    for pid in selected_products:
+                        qty_field = f"prod_qty_{pid}"
+                        prod_qty = max(1, int(request.POST.get(qty_field, 1)))
+                        OrderItemProduct.objects.create(order_item=item, product_id=pid, quantity=prod_qty)
 
             if selected_coefs:
                 item.coefficients.set(selected_coefs)
 
-            # доповнення з кількістю — через AdditionItem
             for add_id in selected_adds:
                 qty_field = f"add_qty_{add_id}"
                 qty = max(1, int(request.POST.get(qty_field, 1)))
                 AdditionItem.objects.create(order_item=item, addition_id=add_id, quantity=qty)
 
-            # перерахунок totals (твоя існуюча функція)
             _recalc_order_totals(order)
-
             return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
-    # 2) GET: підготовка даних для відображення
+    # GET: prepare
     # ============================================================
+    items = (
+        order.items.all()
+        .prefetch_related("products", "coefficients", "addition_items__addition")
+    )
 
-    items = order.items.all()
-
-    # ✅ надійна сума грошей: по факту методу total_cost()
-    if items:
-        total_sum = sum(Decimal(str(i.total_cost())) for i in items)
-        total_sum = total_sum.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    else:
-        total_sum = Decimal("0.00")
-
-    # ✅ формула: Σ (base_ks * coeff) × rate
+    # К/С сумарно та формула по к/с
     effective_ks = Decimal("0.00")
-    formula_terms = []  # список значень effective_ks кожної позиції
+    formula_terms = []
+
+    # ✅ фінальна сума (ВЖЕ з націнкою), але без показу “що це націнка”
+    total_sum = Decimal("0.00")
+
+    order_markup = Decimal(str(getattr(order, "markup_percent", 0) or 0))
 
     for it in items:
         it.color_hex = get_item_color(it.id)
 
-        # 1) базові КС по виробах (products.base_ks)
-        products_ks = sum(
-            (Decimal(str(p.base_ks or 0)) for p in it.products.all()),
-            Decimal("0")
-        )
+        # ---- K/С calc ----
+        products_ks = Decimal("0")
+        prod_terms = []
 
-        # 2) КС по доповненнях (AdditionItem.total_ks())
-        adds_ks = sum(
-            (Decimal(str(ai.total_ks() or 0)) for ai in it.addition_items.all()),
-            Decimal("0")
-        )
+        # якщо новий зв'язок: it.product_items (related_name на through)
+        for op in it.product_items.select_related("product").all():
+            p = op.product
+            base = Decimal(str(p.base_ks or 0))
+            qty_p = int(op.quantity or 1)
 
-        # 3) кількість позицій
+            products_ks += base * Decimal(qty_p)
+            prod_terms.append(f"{base:.2f} × {qty_p}")
+            add_terms = []
+        adds_ks = Decimal("0")
+
+        for ai in it.addition_items.select_related("addition").all():
+            qty_add = int(getattr(ai, "quantity", 1) or 1)
+
+            total_add = Decimal(str(ai.total_ks() or 0))
+            adds_ks += total_add
+
+            # базове за 1 шт (для красивої формули)
+            if qty_add > 0:
+                base_add = (total_add / Decimal(qty_add))
+            else:
+                base_add = total_add
+
+            base_add = _q2(base_add)
+            total_add_q = _q2(total_add)
+
+            add_terms.append(f"{base_add:.2f} × {qty_add}")
         qty = Decimal(str(it.quantity or 1))
 
-        # 4) коефіцієнт (добуток)
         coef = Decimal("1.0")
         for c in it.coefficients.all():
-            coef *= Decimal(str(c.value or 1))
+            coef += Decimal(str(c.value or 0))
+        # формула доповнень як текст
+        products_formula = " + ".join(prod_terms) if prod_terms else "0.00"
+        adds_formula = " + ".join(add_terms) if add_terms else "0.00"
 
-        # 5) підсумки
+        it.ks_formula = (
+            f"(({products_formula}) + ({adds_formula})) "
+            f"× {qty} "
+            f"× {coef:.2f}"
+        )
         ks_base = (products_ks + adds_ks) * qty
-        ks_effective = (ks_base * coef).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        ks_effective = _q2(ks_base * coef)
 
-        # Кладемо в обʼєкт, щоб у шаблоні показувати “повний розрахунок”
-        it.ks_products = products_ks.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        it.ks_adds = adds_ks.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        it.ks_qty = int(qty)  # для відображення
-        it.ks_coef = coef.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        it.ks_base = ks_base.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        it.ks_products = _q2(products_ks)
+        it.ks_adds = _q2(adds_ks)
+        it.ks_qty = int(qty)
+        it.ks_coef = _q2(coef)
         it.ks_effective = ks_effective
 
         effective_ks += ks_effective
         formula_terms.append(f"{ks_effective:.2f}")
 
-    effective_ks = effective_ks.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        # ---- markup effective (але не показуємо користувачу окремо) ----
+        item_markup = it.markup_percent
+        if item_markup is None:
+            m = order_markup
+        else:
+            m = Decimal(str(item_markup))
+
+        # ---- ціна позиції ----
+        # базова ціна = ks_effective * rate
+        base_price = _q2(ks_effective * price_per_ks)
+        final_price = _q2(base_price * (Decimal("1") + (m / Decimal("100"))))
+
+        # для таблиці/суми — показуємо тільки фінальне
+        it.total_cost_value = final_price
+        total_sum += final_price
+
+        # ---- tooltip (детально по к/с) ----
+        NL = "\n"
+        prod_lines = []
+        for op in it.product_items.select_related("product").all():
+            p = op.product
+            base = _q2(Decimal(str(p.base_ks or 0)))
+            qty_p = int(op.quantity or 1)
+            total_p = _q2(base * Decimal(qty_p))
+            prod_lines.append(f"• {p.name}: {base} × {qty_p} = {total_p}")
+        products_breakdown = NL.join(prod_lines) if prod_lines else "—"
+
+        add_lines = []
+        for ai in it.addition_items.select_related("addition").all():
+            a = ai.addition
+            v = _q2(Decimal(str(ai.total_ks() or 0)))
+            qty_txt = f" ×{ai.quantity}" if getattr(ai, "quantity", None) else ""
+            add_lines.append(f"• {a.name}{qty_txt}: {v}")
+        addons_breakdown = NL.join(add_lines) if add_lines else "—"
+
+        coef_lines = []
+        for c in it.coefficients.all():
+            cv = _q2(Decimal(str(c.value or 1)))
+            coef_lines.append(f"• {c.name} ×{cv}")
+        coefs_breakdown = NL.join(coef_lines) if coef_lines else "—"
+
+        it.ks_tooltip = (
+            f"ПРОДУКТИ:\n{products_breakdown}\n\n"
+            f"СУМА продуктів: {it.ks_products} к/с\n\n"
+            f"ДОПОВНЕННЯ:\n{addons_breakdown}\n\n"
+            f"СУМА доповнень: {it.ks_adds} к/с\n\n"
+            f"КОЕФІЦІЄНТИ:\n{coefs_breakdown}\n\n"
+            f"Кількість: {it.ks_qty}\n"
+            f"Коефіцієнт: {it.ks_coef}"
+        )
+
+    effective_ks = _q2(effective_ks)
+    total_sum = _q2(total_sum)
     formula_expression = " + ".join(formula_terms) if formula_terms else "0.00"
 
-    # дефолтні коефіцієнти й доповнення (глобальні)
     default_coeffs = Coefficient.objects.filter(applies_globally=True).order_by("name")
     default_addons = Addition.objects.filter(applies_globally=True).order_by("name")
-
     customers = Customer.objects.all().order_by("-created_at")
 
-    # 🟢 Мітки по кожному зображенню — з кольором (або збережений у мітці, або колір позиції)
     markers_by_image = {}
     for img in images:
         markers_qs = (
@@ -469,17 +573,18 @@ def calculate_order(request, order_id):
             .select_related("item")
             .order_by("id")
         )
-
         markers_by_image[img.id] = [
             {
-                "x": m.x,  # 0..100
-                "y": m.y,
+                "x": float(m.x),
+                "y": float(m.y),
                 "item_name": m.item.name if m.item else "",
                 "color": (m.color or (get_item_color(m.item_id) if m.item_id else "#ff4d4f")),
             }
             for m in markers_qs
         ]
+
     order_name_templates = OrderNameDirectory.objects.all().order_by("name")
+
     context = {
         "order": order,
         "categories": categories,
@@ -488,10 +593,9 @@ def calculate_order(request, order_id):
         "addons": default_addons,
         "rate": price_per_ks,
         "items": items,
-        "total": total_sum,
+        "total": total_sum,  # ✅ фінальна сума "як ніби так і було"
         "customers": customers,
         "markers_by_image": markers_by_image,
-        # 🔥 для блоку формули
         "effective_ks": effective_ks,
         "formula_expression": formula_expression,
         "order_name_templates": order_name_templates,
@@ -956,7 +1060,6 @@ def generate_pdf(request, order_id):
         "Якщо в процесі перевірки креслення виявиться, що не повністю",
         "розкритий обсяг робіт, невраховані роботи додатково збільшать",
         "вартість проєкту.",
-        "Креслення / посилання: _________________________________",
     ]
 
     for line in text_lines:
@@ -1668,7 +1771,8 @@ def order_item_delete(request, item_id):
     return redirect("calculate_order", order_id=order_id)
 
 
-def annotate_order_image(request, image_id):
+@login_required
+def annotate_order_image(request, image_id: int):
     """
     Сторінка розмітки конкретного фото замовлення:
     - вибір позиції (OrderItem)
@@ -1677,39 +1781,68 @@ def annotate_order_image(request, image_id):
     - видалення окремих міток
     - «скинути мітки» тільки для обраної позиції (на фронті)
     Збереження: усі мітки цього зображення з фронту перезаписуються.
+    Працює як з локальними, так і з M365 фото.
     """
     image = get_object_or_404(OrderImage, id=image_id)
     order = image.order
     items = order.items.all().order_by("id")
 
-    # 🔹 POST — зберігаємо всі мітки з JSON
+    # ✅ Формуємо URL на картинку: local або M365
+    if getattr(image, "image", None):
+        # ImageField існує, але може бути пустим
+        if image.image:
+            image_url = image.image.url
+        else:
+            image_url = reverse("m365_image_content", args=[image.id])
+    else:
+        # якщо раптом поля image нема (інша модель/міграції)
+        image_url = reverse("m365_image_content", args=[image.id])
+
+    # -------------------------
+    # POST — зберігаємо всі мітки з JSON
+    # -------------------------
     if request.method == "POST":
         markers_json = request.POST.get("markers_json") or "[]"
-
+        print("markers_json:", markers_json)
         try:
             data = json.loads(markers_json)
+            if not isinstance(data, list):
+                data = []
         except json.JSONDecodeError:
             data = []
 
         # повністю чистимо мітки для цього зображення
         OrderImageMarker.objects.filter(image=image).delete()
 
-        # створюємо наново
         bulk = []
         for m in data:
+            if not isinstance(m, dict):
+                continue
+
+            # координати приходять як % (0..100) — збережемо так само
             try:
                 x = Decimal(str(m.get("x", 0)))
                 y = Decimal(str(m.get("y", 0)))
             except Exception:
                 continue
 
-            item_id = m.get("item_id")
+            # невеликий clamp, щоб не зберігати сміття
+            if x < 0:
+                x = Decimal("0")
+            if y < 0:
+                y = Decimal("0")
+            if x > 100:
+                x = Decimal("100")
+            if y > 100:
+                y = Decimal("100")
+
+            item_id = m.get("item_id") or None
             color = m.get("color") or "#FF0000"
 
             bulk.append(
                 OrderImageMarker(
                     image=image,
-                    item_id=item_id or None,
+                    item_id=item_id,
                     x=x,
                     y=y,
                     color=color,
@@ -1721,32 +1854,35 @@ def annotate_order_image(request, image_id):
 
         return redirect("calculate_order", order_id=order.id)
 
-    # 🔹 GET — збираємо всі існуючі мітки цього зображення
+    # -------------------------
+    # GET — збираємо всі існуючі мітки цього зображення
+    # -------------------------
     markers_qs = (
         OrderImageMarker.objects.filter(image=image)
         .select_related("item")
         .order_by("id")
     )
 
-    markers = []
-    for m in markers_qs:
-        markers.append(
-            {
-                "id": m.id,
-                "x": float(m.x),
-                "y": float(m.y),
-                "item_id": m.item_id,
-                "item_name": m.item.name if m.item else "Без позиції",
-                "color": m.color or "#FF0000",
-            }
-        )
+    markers = [
+        {
+            "id": m.id,
+            "x": float(m.x),
+            "y": float(m.y),
+            "item_id": m.item_id,
+            "item_name": m.item.name if m.item else "Без позиції",
+            "color": m.color or "#FF0000",
+        }
+        for m in markers_qs
+    ]
 
     context = {
         "image": image,
         "order": order,
         "items": items,
-        "markers": markers,  # піде в JS як initialMarkers
+        "markers": markers,
+        "image_url": image_url,  # ✅ головне: у шаблоні використовуй тільки це
     }
+
     return render(request, "doors/annotate_order_image.html", context)
 
 
@@ -1769,3 +1905,195 @@ def add_order_name(request):
 """Teams"""
 
 
+def _stream_graph_content(graph_url: str, access_token: str):
+    """
+    Стрімить контент з Microsoft Graph (щоб не тримати файл у памʼяті).
+    """
+    r = requests.get(
+        graph_url,
+        headers={"Authorization": f"Bearer {access_token}"},
+        stream=True,
+        timeout=60,
+        allow_redirects=True,
+    )
+
+    # Важливо: Graph інколи відповідає 302 на pre-auth download URL — allow_redirects=True це покриває
+    if not r.ok:
+        return HttpResponse(r.text, status=r.status_code, content_type="text/plain")
+
+    content_type = r.headers.get("Content-Type", "application/octet-stream")
+    resp = StreamingHttpResponse(r.iter_content(chunk_size=1024 * 64), content_type=content_type)
+
+    # корисно: кеш відключити, щоб завжди брало актуальне
+    resp["Cache-Control"] = "no-store"
+    return resp
+
+
+def order_file_download(request, file_id: int):
+    of = get_object_or_404(OrderFile, id=file_id)
+
+    # 1) Якщо локальний файл
+    if of.file:
+        resp = StreamingHttpResponse(of.file.open("rb"), content_type="application/octet-stream")
+        filename = of.file.name.split("/")[-1]
+        resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return resp
+
+    # 2) Якщо remote файл (M365)
+    if of.source != "m365" or not of.remote_drive_id or not of.remote_item_id:
+        raise Http404("File not available")
+
+    token = get_app_token()
+    url = f"https://graph.microsoft.com/v1.0/drives/{of.remote_drive_id}/items/{of.remote_item_id}/content"
+
+    r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, stream=True, timeout=180)
+    if r.status_code >= 400:
+        raise Http404(f"Graph error: {r.status_code}")
+
+    filename = of.remote_name or "file"
+    resp = StreamingHttpResponse(
+        r.iter_content(chunk_size=1024 * 256),
+        content_type=r.headers.get("Content-Type", "application/octet-stream"),
+    )
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
+
+
+def _is_image_name(name: str | None) -> bool:
+    if not name:
+        return False
+    ext = os.path.splitext(name.lower())[1]
+    return ext in IMAGE_EXTS
+
+
+def _stream_graph(url: str, token: str) -> StreamingHttpResponse:
+    r = requests.get(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        stream=True,
+        timeout=60,
+    )
+    if r.status_code == 404:
+        raise Http404("Remote file not found")
+    if not r.ok:
+        raise Http404(f"Graph error: {r.status_code}")
+
+    resp = StreamingHttpResponse(
+        streaming_content=r.iter_content(chunk_size=1024 * 256),
+        status=200,
+    )
+    ct = r.headers.get("Content-Type")
+    if ct:
+        resp["Content-Type"] = ct
+    return resp
+
+
+@login_required
+def m365_file_content(request, file_id: int):
+    of = get_object_or_404(OrderFile, id=file_id)
+
+    if of.source != "m365" or not of.remote_drive_id or not of.remote_item_id:
+        raise Http404("Not an M365 file")
+
+    token = get_app_token()
+
+    # content stream
+    url = f"https://graph.microsoft.com/v1.0/drives/{of.remote_drive_id}/items/{of.remote_item_id}/content"
+    resp = _stream_graph(url, token)
+
+    # filename (щоб нормально завантажувалось)
+    filename = of.remote_name or of.description or "file"
+    resp["Content-Disposition"] = f'inline; filename="{filename}"'
+    return resp
+
+
+def m365_download_bytes(*, drive_id: str, item_id: str):
+    """
+    Завантажує байти файлу з Microsoft Graph:
+    GET /drives/{drive_id}/items/{item_id}/content
+    Повертає (bytes, content_type)
+    """
+    token = get_app_token()  # у тебе вже є
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/items/{item_id}/content"
+
+    r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=60, allow_redirects=True)
+    if not r.ok:
+        raise RuntimeError(f"Graph download failed HTTP {r.status_code}: {r.text}")
+
+    content_type = r.headers.get("Content-Type")
+    return r.content, content_type
+
+
+@login_required
+def m365_file_thumb(request, file_id: int):
+    of = get_object_or_404(OrderFile, id=file_id)
+
+    if of.source != "m365" or not of.remote_drive_id or not of.remote_item_id:
+        raise Http404("Not an M365 file")
+
+    # thumb має сенс тільки для картинок
+    name = of.remote_name or of.description
+    if not _is_image_name(name):
+        raise Http404("Not an image")
+
+    token = get_app_token()
+
+    # Graph thumbnails: /thumbnails/0/medium/content
+    url = (
+        f"https://graph.microsoft.com/v1.0/drives/{of.remote_drive_id}"
+        f"/items/{of.remote_item_id}/thumbnails/0/medium/content"
+    )
+    return _stream_graph(url, token)
+
+
+@login_required
+def m365_image_content(request, image_id: int):
+    image = get_object_or_404(OrderImage, id=image_id)
+
+    if not image.remote_drive_id or not image.remote_item_id:
+        raise Http404("Not an M365 image")
+
+    token = get_app_token()
+
+    # /content — віддає байти файла
+    graph_url = f"https://graph.microsoft.com/v1.0/drives/{image.remote_drive_id}/items/{image.remote_item_id}/content"
+    return _stream_graph_content(graph_url, token)
+
+
+@login_required
+def m365_image_thumb(request, image_id: int):
+    image = get_object_or_404(OrderImage, id=image_id)
+
+    if not image.remote_drive_id or not image.remote_item_id:
+        raise Http404("Not an M365 image")
+
+    token = get_app_token()
+
+    # thumbnails — дає меншу картинку, якщо є
+    graph_url = (
+        f"https://graph.microsoft.com/v1.0/drives/{image.remote_drive_id}"
+        f"/items/{image.remote_item_id}/thumbnails/0/medium/content"
+    )
+    return _stream_graph_content(graph_url, token)
+
+
+@login_required
+@xframe_options_exempt
+def order_file_inline(request, file_id):
+    f = get_object_or_404(OrderFile, id=file_id)
+
+    if f.source == "m365":
+        content_bytes, content_type = m365_download_bytes(
+            drive_id=f.remote_drive_id,
+            item_id=f.remote_item_id,
+        )
+        resp = HttpResponse(content_bytes, content_type=content_type or "application/pdf")
+        resp["Content-Disposition"] = f'inline; filename="{(f.remote_name or "file.pdf")}"'
+        return resp
+
+    if f.file:
+        resp = HttpResponse(f.file.read(), content_type="application/pdf")
+        resp["Content-Disposition"] = f'inline; filename="{f.file.name.split("/")[-1]}"'
+        return resp
+
+    return HttpResponse(status=404)

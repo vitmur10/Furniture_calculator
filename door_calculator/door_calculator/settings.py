@@ -15,23 +15,18 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-AZURE_TENANT_ID = os.getenv("AZURE_TENANT_ID")
-AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID")
-AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET")
+M365_TENANT_ID = os.getenv("M365_TENANT_ID", "")
+M365_CLIENT_ID = os.getenv("M365_CLIENT_ID", "")
+M365_CLIENT_SECRET = os.getenv("M365_CLIENT_SECRET", "")
 
-AZURE_REDIRECT_URI = os.getenv(
-    "AZURE_REDIRECT_URI",
-    "http://localhost:8000/teams/callback/",
-)
+M365_AUTHORITY = f"https://login.microsoftonline.com/{M365_TENANT_ID}"
+M365_SCOPE = ["https://graph.microsoft.com/.default"]
 
-AZURE_AUTHORITY = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}"
-
-AZURE_SCOPES = [
-    "User.Read",
-    "Team.ReadBasic.All",
-    "Channel.ReadBasic.All",
-    "ChannelMessage.Read.All",
-]
+raw_sites = os.getenv("M365_SITE_DISPLAY_NAMES", "Проекти 2025,Переробка профілю 2025")
+M365_SITE_DISPLAY_NAMES = [s.strip() for s in raw_sites.split(",") if s.strip()]
+M365_DRIVE_NAME = os.getenv("M365_DRIVE_NAME", "Документи")
+M365_ORDER_ROOT_FOLDER = os.getenv("M365_ORDER_ROOT_FOLDER", "Main")  # якщо замовлення НЕ в корені (типу "Main"), інакше пусто
+M365_TECH_KEYWORD = os.getenv("M365_TECH_KEYWORD", "Чертежи в работу")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
@@ -41,7 +36,7 @@ SECRET_KEY = "django-insecure-fojb6-3@+u%rw5r2#)i5*3ra%4i-wd%2ne^*--(@vfa@b&-v0s
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["575fcfb3a526.ngrok-free.app", "localhost", "127.0.0.1"]
+ALLOWED_HOSTS = ["4f62124b6562.ngrok-free.app", "localhost", "127.0.0.1"]
 
 CSRF_TRUSTED_ORIGINS = [
     "https://*.ngrok-free.app",
@@ -124,7 +119,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/4.2/topics/i18n/
 
-LANGUAGE_CODE = "en-us"
+LANGUAGE_CODE = 'uk'
 
 TIME_ZONE = "UTC"
 
@@ -149,3 +144,18 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+M365_SYNC_CHAINS = {
+    "precalc": [
+        {"type": "child_contains", "value": "2-Комерційна пропозиція"},
+        {"type": "child_all_contains", "value": "КП"},          # ✅ усі КП*
+        {"type": "child_contains", "value": "1 Розрахунок матеріалів"},
+        {"type": "search_all_contains", "value": "Для КС"},     # ✅ усі Для КС*
+    ],
+    "final": [
+        {"type": "child_contains", "value": "4-Проектування"},
+        {"type": "search_all_contains", "value": "Проект"},     # якщо їх може бути багато
+        {"type": "child_contains", "value": "3 Креслення в роботу"},
+        {"type": "search_all_contains", "value": "Для КС"},
+    ],
+}

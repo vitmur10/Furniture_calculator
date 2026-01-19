@@ -1,7 +1,49 @@
 {% extends 'base.html' %}
 {% block content %}
 <style>
+    .ks-tooltip {
+      position: relative;
+      cursor: help;
+      border-bottom: 1px dashed #0d6efd;
+    }
 
+    .ks-tooltip::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: 130%;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: pre;
+      background: rgba(0, 0, 0, 0.92);
+      color: #fff;
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.45;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+      min-width: 320px;
+      text-align: left;
+      z-index: 999;
+    }
+
+    .ks-tooltip::before {
+      content: "";
+      position: absolute;
+      bottom: 115%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-top-color: rgba(0, 0, 0, 0.92);
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .ks-tooltip:hover::after,
+    .ks-tooltip:hover::before {
+      opacity: 1;
+    }
 
   .products-columns {
     column-count: 2;
@@ -33,6 +75,7 @@
     overflow: visible;
     transition: all 0.4s ease;
     align-items: flex-start;
+    gap: 16px;
   }
 
   .order-sketch {
@@ -52,6 +95,9 @@
     box-sizing: border-box;
     overflow: hidden;
   }
+.main-image-wrapper {
+    position: relative;
+}
 
   .order-sketch.collapsed {
     flex: 0;
@@ -330,109 +376,142 @@
 <button id="restoreSketch">📈 Показати ескіз</button>
 
 <div class="order-layout">
-  <!-- 🔹 Ліва колонка: галерея фото -->
+
+  <!-- 🔹 Ліва колонка: галерея фото + файли -->
   <div class="order-sketch" id="sketch-section">
-    {% if order.images.all %}
+    {% if order.images.exists %}
       {% with first_img=order.images.all.0 %}
-      <button class="toggle-btn" id="toggleSketch">📉 Згорнути</button>
+        <button class="toggle-btn" id="toggleSketch">📉 Згорнути</button>
 
-      <div class="main-image-wrapper" id="mainImageWrapper">
-        <div class="main-image-inner" id="mainImageInner">
-          <img src="{{ first_img.image.url }}"
-               alt="Ескіз замовлення"
-               id="mainImage"
-               data-image-id="{{ first_img.id }}">
+        <div class="main-image-wrapper" id="mainImageWrapper">
+          <div class="main-image-inner" id="mainImageInner">
 
-          {# Контейнер, в який JS домалює мітки для поточного зображення #}
-          <div class="marker-layer" id="markerLayer"></div>
+            {# ✅ ЛОКАЛЬНЕ фото (якщо є) або ✅ M365 (якщо локального нема) #}
+            {% if first_img.image %}
+              <img
+                src="{{ first_img.image.url }}"
+                alt="Ескіз замовлення"
+                id="mainImage"
+                data-image-id="{{ first_img.id }}"
+              >
+            {% else %}
+              <img
+                src="{% url 'm365_image_content' first_img.id %}"
+                alt="Ескіз замовлення"
+                id="mainImage"
+                data-image-id="{{ first_img.id }}"
+              >
+            {% endif %}
+
+            <div class="marker-layer" id="markerLayer"></div>
+          </div>
+
+          <div class="zoom-hint">
+            Коліщатко — зум, мишкою — перетягнути
+          </div>
         </div>
-        <div class="zoom-hint">
-          Коліщатко — зум, мишкою — перетягнути
+
+        <a href="{% url 'annotate_order_image' first_img.id %}"
+           class="btn btn-outline-secondary btn-sm w-100 mt-2"
+           id="annotateBtn">
+          🖊️ Розмітити фото
+        </a>
+
+        <div class="thumbs-row mt-2">
+          {% for img in order.images.all %}
+            {% if img.image %}
+              <img
+                src="{{ img.image.url }}"
+                class="thumb-img {% if forloop.first %}active{% endif %}"
+                data-full="{{ img.image.url }}"
+                data-image-id="{{ img.id }}"
+              >
+            {% else %}
+              <img
+                src="{% url 'm365_image_thumb' img.id %}"
+                class="thumb-img {% if forloop.first %}active{% endif %}"
+                data-full="{% url 'm365_image_content' img.id %}"
+                data-image-id="{{ img.id }}"
+              >
+            {% endif %}
+          {% endfor %}
         </div>
-      </div>
-
-      <a href="{% url 'annotate_order_image' first_img.id %}"
-         class="btn btn-outline-secondary btn-sm w-100 mt-2"
-         id="annotateBtn">
-        🖊️ Розмітити фото
-      </a>
-
-      <div class="thumbs-row mt-2">
-        {% for img in order.images.all %}
-          <img src="{{ img.image.url }}"
-               class="thumb-img {% if forloop.first %}active{% endif %}"
-               data-full="{{ img.image.url }}"
-               data-image-id="{{ img.id }}">
-        {% endfor %}
-      </div>
       {% endwith %}
     {% else %}
       <div class="text-muted small mb-2">Фото замовлення ще не завантажені</div>
     {% endif %}
 
-    <!-- форма завантаження фото -->
-    <form method="post" enctype="multipart/form-data" class="floating-upload">
-      {% csrf_token %}
-      <input type="hidden" name="upload_images" value="1">
-      <div class="d-flex flex-column gap-2">
-        <input type="file" name="images" accept="image/*" multiple
-               class="form-control form-control-sm">
-        <button class="btn btn-sm btn-primary">⬆️ Завантажити фото (до 50)</button>
-      </div>
-    </form>
+    {# 🔹 Файли (залиш як у тебе), але важливо: цей блок має бути ВСЕРЕДИНІ .order-sketch #}
+{% if order.files.all %}
+  <div class="mt-3 w-100">
+    <h6 class="fw-bold mb-2">Прикріплені файли:</h6>
 
-    <!-- форма додаткових файлів (креслення/підрахунки) -->
-    <form method="post" enctype="multipart/form-data" class="floating-upload mt-3">
-      {% csrf_token %}
-      <input type="hidden" name="upload_files" value="1">
-      <div class="d-flex flex-column gap-2">
-        <input type="file" name="files" multiple
-               class="form-control form-control-sm">
-        <input type="text" name="files_desc"
-               class="form-control form-control-sm"
-               placeholder="Загальний опис (необов'язково)">
-        <button class="btn btn-sm btn-outline-secondary">📎 Додати файли</button>
-      </div>
-    </form>
+    <ul class="list-unstyled small" id="filesList">
+      {% for f in order.files.all %}
+        <li class="mb-2 d-flex align-items-center gap-2">
+          <div class="flex-grow-1">
+            {% if f.source == "m365" %}
+              {{ f.remote_name|default:f.description }}
+            {% else %}
+              {{ f.description }}
+            {% endif %}
+          </div>
 
-    {% if order.files.all %}
-      <div class="mt-3 w-100">
-        <h6 class="fw-bold mb-2">Прикріплені файли:</h6>
-        <ul class="list-unstyled small">
-          {% for f in order.files.all %}
-            <li class="mb-2">
-              <form method="post" class="d-flex align-items-center gap-2">
-                {% csrf_token %}
+          <!-- Перегляд -->
+            {% if f.source == "m365" %}
+              <button type="button"
+                      class="btn btn-sm btn-outline-secondary js-preview"
+                      data-preview-url="{% url 'order_file_inline' f.id %}">
+                👁️ Перегляд
+              </button>
+            {% elif f.file %}
+              <button type="button"
+                      class="btn btn-sm btn-outline-secondary js-preview"
+                      data-preview-url="{{ f.file.url }}">
+                👁️ Перегляд
+              </button>
+            {% endif %}
 
-                <a href="{{ f.file.url }}" target="_blank" class="text-decoration-none flex-grow-1">
-                  📄 {{ f.description|default:f.file.name|cut:"order_files/" }}
-                </a>
+          <!-- Скачати -->
+          {% if f.source == "m365" %}
+            <a class="btn btn-sm btn-outline-primary"
+               href="{% url 'order_file_download' f.id %}">
+              Скачати
+            </a>
+            {% if f.remote_web_url %}
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{{ f.remote_web_url }}" target="_blank">
+                Відкрити
+              </a>
+            {% endif %}
+          {% elif f.file %}
+            <a class="btn btn-sm btn-outline-primary" href="{{ f.file.url }}" download>
+              Скачати
+            </a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ f.file.url }}" target="_blank">
+              Відкрити
+            </a>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
 
-                <input type="text"
-                       name="file_desc"
-                       value="{{ f.description|default:f.file.name|cut:'order_files/' }}"
-                       class="form-control form-control-sm"
-                       style="max-width: 220px;">
+    <!-- Вікно перегляду PDF -->
+        <div id="pdfPreviewBox" class="mt-3" style="display:none;">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="fw-bold">Перегляд файлу</div>
+            <button type="button" id="closePreview" class="btn btn-sm btn-outline-secondary">✖</button>
+          </div>
 
-                <button type="submit"
-                        name="update_file"
-                        value="{{ f.id }}"
-                        class="btn btn-sm btn-outline-primary">
-                  💾
-                </button>
-
-                <button type="submit"
-                        name="delete_file"
-                        value="{{ f.id }}"
-                        class="btn btn-sm btn-outline-danger"
-                        onclick="return confirm('Видалити цей файл?');">
-                  🗑
-                </button>
-              </form>
-            </li>
-          {% endfor %}
-        </ul>
-      </div>
+          <div class="file-preview" style="height: 600px;">
+            <embed id="pdfEmbed"
+                   src=""
+                   type="application/pdf"
+                   width="100%"
+                   height="100%" />
+          </div>
+        </div>
+  </div>
     {% endif %}
   </div>
 
@@ -530,39 +609,12 @@
     </div>
     <div class="mb-3">
       <label class="form-label fw-bold">Назва замовлення</label>
-
-      <div class="d-flex gap-2">
-        <!-- Поле тексту -->
-        <input type="text"
-               name="order_name"
-               id="orderNameInput"
-               class="form-control"
-               placeholder="Введіть назву або оберіть зі списку">
-
-        <!-- Випадаючий список довідника -->
-        <select name="order_name_template"
-                id="orderNameTemplateSelect"
-                class="form-select"
-                style="max-width: 220px;">
-          <option value="">— Обрати зі списку —</option>
-          {% for tpl in order_name_templates %}
-            <option value="{{ tpl.id }}">
-              {{ tpl.name }}
-            </option>
-          {% endfor %}
-        </select>
-
-        <!-- Кнопка створити -->
-        <button type="button"
-                id="addOrderNameBtn"
-                class="btn btn-outline-primary">
-          +
-        </button>
-      </div>
-
-      <div class="form-text small text-muted">
-        Обери з довідника, або введи свою назву і натисни ➕ щоб додати в список.
-      </div>
+    <br>
+        {% if order.order_name %}
+          {{ order.order_name }}
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
     </div>
 
     <form method="post">
@@ -584,7 +636,6 @@
                     class="form-select"
                     style="max-width: 110px;">
               <option value="">№</option>
-              {# самі варіанти 1–50 додасть JS #}
             </select>
           </div>
 
@@ -611,21 +662,29 @@
 
             <div id="cat-body-{{ cat.id }}" class="category-body mt-2">
               {% for p in cat.products.all %}
-                <div class="product-option">
-                  <input type="checkbox"
-                         name="products"
-                         value="{{ p.id }}"
-                         class="form-check-input"
-                         data-category="{{ cat.name }}">
-                  {% if p.image %}
-                    <img src="{{ p.image.url }}" alt="{{ p.name }}">
-                  {% else %}
-                    <img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">
-                  {% endif %}
-                  <label>{{ p.name }} ({{ p.base_ks }} к/с)</label>
-                </div>
-              {% empty %}
-                <div class="text-muted small">Немає виробів у цій категорії</div>
+                <div class="product-option d-flex align-items-center gap-2">
+                    <input type="checkbox"
+                           name="products"
+                           value="{{ p.id }}"
+                           class="form-check-input product-check"
+                           data-category="{{ cat.name }}"
+                           data-prod-id="{{ p.id }}">
+
+                    {% if p.image %}
+                      <img src="{{ p.image.url }}" alt="{{ p.name }}">
+                    {% else %}
+                      <img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">
+                    {% endif %}
+
+                    <label class="flex-grow-1 mb-0">{{ p.name }} ({{ p.base_ks }} к/с)</label>
+
+                    <input type="number"
+                           min="1"
+                           value="1"
+                           class="form-control form-control-sm prod-qty"
+                           style="width: 90px;"
+                           name="prod_qty_{{ p.id }}">
+                  </div>
               {% endfor %}
             </div>
           </div>
@@ -636,19 +695,31 @@
       <div id="productsFlatList" class="products-columns">
         <label class="form-label fw-bold">Оберіть вироби:</label>
         {% for p in products %}
-        <div class="product-option">
-          <input type="checkbox"
-                 name="products"
-                 value="{{ p.id }}"
-                 class="form-check-input"
-                 data-category="{{ p.category.name }}">
-          {% if p.image %}
-            <img src="{{ p.image.url }}" alt="{{ p.name }}">
-          {% else %}
-            <img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">
-          {% endif %}
-          <label>{{ p.name }} ({{ p.base_ks }} к/с)</label>
-        </div>
+          <div class="product-option d-flex align-items-center gap-2">
+            <input type="checkbox"
+                   name="products"
+                   value="{{ p.id }}"
+                   class="form-check-input product-check"
+                   data-category="{{ p.category.name }}"
+                   data-prod-id="{{ p.id }}">
+
+            {% if p.image %}
+              <img src="{{ p.image.url }}" alt="{{ p.name }}">
+            {% else %}
+              <img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">
+            {% endif %}
+
+            <label class="flex-grow-1 mb-0">{{ p.name }} ({{ p.base_ks }} к/с)</label>
+
+            <!-- ✅ к-сть виробів -->
+            <input type="number"
+                   min="1"
+                   value="1"
+                   class="form-control form-control-sm prod-qty"
+                   style="width: 90px;"
+                   name="prod_qty_{{ p.id }}"
+                   disabled>
+          </div>
         {% endfor %}
       </div>
 
@@ -671,7 +742,7 @@
         {% endfor %}
       </div>
 
-      <div class="mb-3">
+  <!--    <div class="mb-3">
         <label class="form-label fw-bold">Коефіцієнти:</label>
         {% for c in coefficients %}
         <div class="form-check form-check-inline mb-2">
@@ -679,14 +750,79 @@
           <label class="form-check-label">{{ c.name }} ×{{ c.value }}</label>
         </div>
         {% endfor %}
-      </div>
+      </div>-->
 
       <div class="text-center mb-4">
         <button type="submit" class="btn btn-danger w-100 py-2">➕ Додати позицію</button>
       </div>
     </form>
       {% endif %}
+<div class="row g-2 mb-2">
 
+  <!-- Націнка -->
+  <div class="col-md-4">
+    <form id="saveMarkupForm" method="post" class="card p-2 h-100">
+      {% csrf_token %}
+      <input type="hidden" name="save_markup" value="1">
+
+      <label class="form-label fw-bold mb-1">Націнка (%)</label>
+      <div class="input-group">
+        <input type="number" step="0.01"
+               name="order_markup"
+               value="{{ order.markup_percent|default:0 }}"
+               class="form-control"
+               placeholder="За замовчуванням">
+        <button type="submit" class="btn btn-primary">💾</button>
+      </div>
+      <small class="text-muted">Fallback для порожніх позицій</small>
+    </form>
+  </div>
+      <!-- Коефіцієнти -->
+  <div class="col-md-8">
+    <form id="bulkCoeffsForm" method="post" class="card p-2 mb-2">
+  {% csrf_token %}
+  <input type="hidden" name="bulk_coefficients" value="1">
+
+  <div class="row g-2 align-items-stretch">
+
+    <!-- ЛІВО: коефіцієнти (широко) -->
+    <div class="col-md-9">
+      <label class="form-label fw-bold mb-1">Коефіцієнти</label>
+      <select name="bulk_coeff_ids" class="form-select" multiple size="3">
+        {% for c in coefficients %}
+          <option value="{{ c.id }}">{{ c.name }} +{{ c.value }}</option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">Ctrl / Shift — мультивибір</small>
+    </div>
+
+    <!-- ПРАВО: керування (в колонку) -->
+    <div class="col-md-3 d-flex flex-column gap-2">
+
+      <div>
+        <label class="form-label fw-bold mb-1">Застосувати</label>
+        <select name="bulk_scope" class="form-select">
+          <option value="all">Всім позиціям</option>
+          <option value="selected">Лише вибраним</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="form-label fw-bold mb-1">Режим</label>
+        <select name="bulk_mode" class="form-select">
+          <option value="add">Додати</option>
+        </select>
+      </div>
+
+      <button type="submit" class="btn btn-success w-100 mt-auto">
+        ✓ Застосувати
+      </button>
+
+    </div>
+  </div>
+</form>
+  </div>
+</div>
     {% if items %}
       <div class="summary-table">
         <table class="table table-bordered text-center align-middle mb-0">
@@ -698,6 +834,10 @@
                 <th>К/С (розрахунок)</th>
                 <th>Ціна</th>
                 <th>Дія</th>
+                <th>Націнка %</th>
+                <th style="width:40px;">
+                      <input id="selectAllItems" type="checkbox" class="form-check-input">
+                </th>
               </tr>
             </thead>
           <tbody>
@@ -727,17 +867,16 @@
 
                   <!-- 🔥 К/С повний розрахунок -->
                     <td class="text-start">
-                      ({{ i.ks_products|default:0|floatformat:2 }} + {{ i.ks_adds|default:0|floatformat:2 }})
-                      × {{ i.ks_qty|default:1 }}
-                      × {{ i.ks_coef|default:1|floatformat:2 }}
-                      =
-                      <strong>{{ i.ks_effective|default:0|floatformat:2 }}</strong> к/с
-                    </td>
+                  <span class="ks-tooltip" data-tooltip="{{ i.ks_tooltip }}">
+                    {{ i.ks_formula }} =
+                    <strong>{{ i.ks_effective|floatformat:2 }}</strong> к/с
+                  </span>
+                </td>
                   </td>
 
                   <!-- Ціна -->
                   <td class="fw-bold text-success">
-                    {{ i.total_cost|floatformat:2 }} грн
+                    {{ i.total_cost_value|floatformat:2 }} грн
                   </td>
 
                   <!-- Дія -->
@@ -747,16 +886,30 @@
                        ✏️
                     </a>
                   </td>
+                    <td style="min-width:140px;">
+                        <input type="number" step="0.01"
+                               name="item_markup_{{ i.id }}"
+                               value="{{ i.markup_percent|default_if_none:'' }}"
+                               form="saveMarkupForm">
+                      <div class="small text-muted">
+                        зараз: {{ i.effective_markup_percent|default:"" }}
+                      </div>
+                    </td>
+                    <td style="width:40px;">
+                      <input type="checkbox"
+                             class="form-check-input item-select"
+                             name="selected_item_ids"
+                             value="{{ i.id }}"
+                             form="bulkCoeffsForm">
+                    </td>
                 </tr>
                 {% endfor %}
           </tbody>
         </table>
       </div>
                 {% if request.user.is_superuser %}
-
     <div class="card shadow-sm my-4" style="border-left: 6px solid #28a745;">
         <div class="card-body">
-
             <h4 class="text-success fw-bold mb-3">
                 💰 Загальна вартість: {{ total|floatformat:2 }} грн
             </h4>
@@ -793,11 +946,6 @@
       <div id="finalForm" class="final-form mt-3">
         <h5 class="fw-bold mb-3">Додаткові параметри</h5>
         <div class="row g-3">
-          <div class="col-md-4">
-            <label class="form-label fw-bold">Націнка (%)</label>
-            <input type="number" id="markup" class="form-control" placeholder="10">
-          </div>
-
           <div class="col-md-4">
             <label class="form-label fw-bold">Доставка (грн)</label>
             <input type="number" id="deliveryCost" class="form-control" placeholder="300">
@@ -844,8 +992,8 @@
       "{{ image_id }}": [
         {% for m in markers %}
           {
-            x: {{ m.x|floatformat:2 }},
-            y: {{ m.y|floatformat:2 }},
+            x: "{{ m.x }}",
+            y: "{{ m.y }}",
             item: "{{ m.item_name|escapejs }}",
             color: "{{ m.color }}"
           }{% if not forloop.last %},{% endif %}
@@ -974,24 +1122,29 @@ document.addEventListener("DOMContentLoaded", () => {
   const thumbs      = document.querySelectorAll(".thumb-img");
   const annotateBtn = document.getElementById("annotateBtn");
 
-  function renderMarkers(imageId) {
-    if (!markerLayer) return;
-    markerLayer.innerHTML = "";
-    if (!imageId) return;
+    function renderMarkers(imageId) {
+  if (!markerLayer) return;
+  markerLayer.innerHTML = "";
+  if (!imageId) return;
 
-    const arr = markersByImage[imageId] || [];
-    arr.forEach(m => {
-      const dot = document.createElement("div");
-      dot.className = "marker-dot";
-      const color = m.color || "#ff4d4f";
-      dot.style.left = m.x + "%";
-      dot.style.top  = m.y + "%";
-      dot.style.borderColor = color;
-      dot.style.backgroundColor = color + "33";
-      dot.dataset.label = m.item || "";
-      markerLayer.appendChild(dot);
-    });
-  }
+  const arr = markersByImage[imageId] || [];
+  arr.forEach(m => {
+    const dot = document.createElement("div");
+    dot.className = "marker-dot";
+
+    const color = m.color || "#ff4d4f";
+
+    const x = parseFloat(String(m.x).replace(",", "."));
+    const y = parseFloat(String(m.y).replace(",", "."));
+
+    if (Number.isFinite(x)) dot.style.left = x + "%";
+    if (Number.isFinite(y)) dot.style.top  = y + "%";
+
+    dot.style.borderColor = color;
+    dot.style.backgroundColor = color + "33";
+    dot.dataset.label = m.item || "";
+    markerLayer.appendChild(dot);
+  });}
 
   if (thumbs.length && mainImage) {
     thumbs.forEach(t => {
@@ -1246,5 +1399,74 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 })();
 </script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("preview script loaded");
 
+  const previewBox = document.getElementById("pdfPreviewBox");
+  const pdfEmbed   = document.getElementById("pdfEmbed");
+  const closeBtn   = document.getElementById("closePreview");
+
+  // Делегування кліку (працює навіть якщо кнопки генеруються/оновлюються)
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".js-preview");
+    if (!btn) return;
+
+    e.preventDefault();
+    const url = btn.getAttribute("data-preview-url");
+    console.log("clicked preview, url=", url);
+
+    if (!url) {
+      alert("Немає data-preview-url на кнопці");
+      return;
+    }
+
+    // форсимо перезавантаження embed
+    pdfEmbed.src = "";
+    setTimeout(() => {
+      pdfEmbed.src = url;
+      previewBox.style.display = "block";
+    }, 0);
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      previewBox.style.display = "none";
+      pdfEmbed.src = "";
+    });
+  }
+});
+</script>
+<script>
+  (function () {
+    const selectAll = document.getElementById('selectAllItems');
+    if (!selectAll) return;
+
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('.item-select').forEach(cb => {
+        cb.checked = selectAll.checked;
+      });
+    });
+  })();
+  function syncQtyForCheckbox(cb) {
+    const row = cb.closest(".product-option");
+    if (!row) return;
+    const qty = row.querySelector(".prod-qty");
+    if (!qty) return;
+
+    qty.disabled = !cb.checked;
+    if (!cb.checked) qty.value = 1;
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    // 1) синхронізуємо при завантаженні
+    document.querySelectorAll(".product-check").forEach(syncQtyForCheckbox);
+  });
+
+  // 2) і при зміні
+  document.addEventListener("change", (e) => {
+    if (!e.target.classList.contains("product-check")) return;
+    syncQtyForCheckbox(e.target);
+  });
+</script>
 {% endblock %}

@@ -124,18 +124,12 @@
 <body>
   <nav class="navbar navbar-dark py-3 shadow-sm">
     <div class="container d-flex justify-content-between align-items-center">
-      <a class="navbar-brand" href="/calc/">💰 Door Calculator</a>
+      <a class="navbar-brand" href="/">💰 Door Calculator</a>
       <button id="theme-toggle" class="theme-toggle" title="Змінити тему">🌙</button>
     </div>
   </nav>
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
     <div class="container-fluid px-4">
-      <a class="navbar-brand fw-bold text-light" href="/">
-        ⚙️ DoorCalc
-      </a>
-        <a href="{% url 'teams_login' %}" class="btn btn-outline-primary">
-          🔗 Підключити / оновити підключення Teams
-        </a>
       <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarMain">
         <span class="navbar-toggler-icon"></span>
       </button>
@@ -147,16 +141,10 @@
             {% if request.user.is_superuser %}
           <li class="nav-item">
             <a class="nav-link {% if request.path == '/' %}active{% endif %}" href="/">
-              🏠 Головна
-            </a>
-          </li>
-            {% endif %}
-          <!-- Замовлення -->
-          <li class="nav-item">
-            <a class="nav-link {% if 'order' in request.path %}active{% endif %}" href="{% url 'order_list' %}">
               📦 Замовлення
             </a>
           </li>
+            {% endif %}
             {% if request.user.is_superuser %}
 
           <!-- Звіти -->

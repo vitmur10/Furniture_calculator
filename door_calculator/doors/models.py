@@ -1,5 +1,7 @@
+from decimal import Decimal, ROUND_HALF_UP
+
 from django.db import models
-from django.contrib.auth.models import User
+
 
 class OrderNameDirectory(models.Model):
     name = models.CharField(
@@ -22,6 +24,7 @@ class OrderNameDirectory(models.Model):
 
     def __str__(self):
         return self.name
+
 
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Назва категорії")
@@ -212,6 +215,12 @@ class Order(models.Model):
         ("paid", "Сплачено"),
         ("awaiting_payment", "Очікує оплату"),
     ]
+    markup_percent = models.DecimalField(
+        "Націнка за замовлення (%)",
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
     customer = models.ForeignKey(
         "Customer",
         on_delete=models.SET_NULL,
@@ -236,9 +245,23 @@ class Order(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="in_progress")
     status_finance = models.CharField(max_length=20, choices=STATUS_CHOICES_FINANCE, default="postponed")
     sketch = models.ImageField(upload_to="sketches/", blank=True, null=True)
+    source = models.CharField(max_length=20, default="local")  # local | m365
+    remote_site_id = models.CharField(max_length=255, blank=True, null=True)
+    remote_drive_id = models.CharField(max_length=255, blank=True, null=True)
+    remote_folder_id = models.CharField(max_length=255, blank=True, null=True)
+    remote_web_url = models.URLField(blank=True, null=True)
 
     def __str__(self):
         return f"Замовлення №{self.order_number}"
+
+
+class OrderItemProduct(models.Model):
+    order_item = models.ForeignKey("OrderItem", on_delete=models.CASCADE, related_name="product_items")
+    product = models.ForeignKey("Product", on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        unique_together = ("order_item", "product")
 
 
 class OrderItem(models.Model):
@@ -256,6 +279,12 @@ class OrderItem(models.Model):
         help_text="Назва позиції (напр. 'Двостулкові двері')",
     )
     products = models.ManyToManyField(Product, blank=True)
+    products_v2 = models.ManyToManyField(
+        "Product",
+        through="OrderItemProduct",
+        blank=True,
+        related_name="order_items_v2",
+    )
     coefficients = models.ManyToManyField(Coefficient, blank=True)
     quantity = models.PositiveIntegerField(default=1)
 
@@ -265,6 +294,44 @@ class OrderItem(models.Model):
         default="pending",
         verbose_name="Статус позиції",
     )
+    markup_percent = models.DecimalField(
+        "Індивідуальна націнка (%)",
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Якщо задано — перекриває націнку замовлення",
+    )
+
+    def effective_markup_percent(self) -> Decimal:
+        """
+        Повертає % націнки для позиції:
+        - якщо задано у позиції → беремо його
+        - інакше → беремо з замовлення
+        """
+        if self.markup_percent is not None:
+            return Decimal(str(self.markup_percent))
+        return Decimal(str(getattr(self.order, "markup_percent", 0) or 0))
+
+    def base_cost(self) -> Decimal:
+        """
+        Собівартість без націнки (чисто по к/с * коеф * тариф).
+        """
+        base_ks, coef = self.total_ks()
+        rate = Rate.objects.first()
+        rate_val = Decimal(str(rate.price_per_ks)) if rate else Decimal("0")
+        value = Decimal(str(base_ks)) * Decimal(str(coef)) * rate_val
+        return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    def total_cost(self) -> float:
+        """
+        Фінальна ціна з націнкою (позиційною або замовлення).
+        """
+        base = self.base_cost()
+        m = self.effective_markup_percent()
+        total = base * (Decimal("1") + (m / Decimal("100")))
+        total = total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return float(total)
 
     def total_ks(self):
         base_ks = sum(p.base_ks for p in self.products.all())
@@ -285,9 +352,36 @@ class OrderItem(models.Model):
 
 
 class OrderImage(models.Model):
+    """Фото замовлення з Microsoft 365 (Teams/SharePoint)"""
+
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="images")
-    image = models.ImageField(upload_to="order_images/")
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    # M365 remote reference (обов'язкові поля)
+    remote_site_id = models.CharField(max_length=255)
+    remote_drive_id = models.CharField(max_length=255)
+    remote_item_id = models.CharField(max_length=255)
+    remote_web_url = models.URLField(blank=True, null=True)
+    remote_name = models.CharField(max_length=255, blank=True, null=True)
+    remote_size = models.BigIntegerField(blank=True, null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["remote_drive_id", "remote_item_id"],
+                name="uniq_remote_image",
+            )
+        ]
+
+    def get_image_url(self):
+        """Повертає URL для відображення фото з M365"""
+        from django.urls import reverse
+        return reverse("m365_image_content", args=[self.id])
+
+    def get_thumb_url(self):
+        """Повертає URL для мініатюри з M365"""
+        from django.urls import reverse
+        return reverse("m365_image_thumb", args=[self.id])
 
     def __str__(self):
         return f"Фото для замовлення {self.order.order_number}"
@@ -320,24 +414,33 @@ class OrderImageMarker(models.Model):
 
 
 class OrderFile(models.Model):
-    order = models.ForeignKey(
-        Order,
-        on_delete=models.CASCADE,
-        related_name="files",
-        verbose_name="Замовлення",
-    )
-    file = models.FileField(upload_to="order_files/", verbose_name="Файл")
-    description = models.CharField(
-        "Опис / назва файлу", max_length=255, blank=True, null=True
-    )
+    SOURCE_CHOICES = [
+        ("local", "Local upload"),
+        ("m365", "Microsoft 365 (SharePoint/OneDrive)"),
+    ]
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="files")
+    file = models.FileField(upload_to="order_files/", blank=True, null=True)  # <- важливо
+
+    description = models.CharField(max_length=255, blank=True, null=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        verbose_name = "Додатковий файл замовлення"
-        verbose_name_plural = "Додаткові файли замовлення"
+    # NEW: remote reference
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default="local")
+    remote_site_id = models.CharField(max_length=255, blank=True, null=True)
+    remote_drive_id = models.CharField(max_length=255, blank=True, null=True)
+    remote_item_id = models.CharField(max_length=255, blank=True, null=True)
+    remote_web_url = models.URLField(blank=True, null=True)
+    remote_name = models.CharField(max_length=255, blank=True, null=True)
+    remote_size = models.BigIntegerField(blank=True, null=True)
 
-    def __str__(self):
-        return self.description or f"Файл для замовлення {self.order.order_number}"
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "remote_drive_id", "remote_item_id"],
+                name="uniq_remote_file",
+            )
+        ]
 
 
 class OrderProgress(models.Model):

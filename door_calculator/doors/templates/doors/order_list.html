@@ -54,19 +54,25 @@
       </div>
       {% endif %}
 
-      {# 🔹 Фільтр по назві замовлення (NEW) #}
-      <div class="col-md-4 mt-3">
-        <label class="form-label fw-bold">Назва замовлення</label>
-        <select name="order_name" class="form-select">
-          <option value="">Усі</option>
-          {% for name in order_name_choices %}
-            <option value="{{ name }}"
-                    {% if request.GET.order_name == name %}selected{% endif %}>
-              {{ name }}
-            </option>
-          {% endfor %}
-        </select>
+    {# 🔹 Пошук по назві замовлення #}
+    <div class="col-md-4 mt-3">
+      <label class="form-label fw-bold">Назва замовлення</label>
+
+      <div class="input-group">
+        <input type="text"
+               name="order_name"
+               class="form-control"
+               placeholder="Почніть вводити…"
+               list="orderNameList"
+               value="{{ request.GET.order_name|default:'' }}">
+        <button class="btn btn-outline-secondary" type="submit">🔍</button>
       </div>
+      <datalist id="orderNameList">
+        {% for name in order_name_choices %}
+          <option value="{{ name }}"></option>
+        {% endfor %}
+      </datalist>
+    </div>
 
 
       <div class="col-md-2 ms-auto text-end mt-3">
@@ -86,8 +92,8 @@
           <th>Назва замовлення</th> {# NEW #}
           <th>Дата</th>
           <th>Позицій</th>
+          <th>Кількість к\с</th>
           <th>Вартість</th>
-
           {% if request.user.is_superuser %}
             <th>Статус</th>
             <th>Фінансовий статус</th>
@@ -120,6 +126,7 @@
 
           <td>{{ order.created_at|date:"d.m.Y" }}</td>
           <td>{{ order.items.count }}</td>
+          <td>{{ order.total_ks }}</td>
           <td>{{ order.total_cost|floatformat:2 }} грн</td>
 
           {% if request.user.is_superuser %}
