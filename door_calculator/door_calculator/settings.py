@@ -158,4 +158,14 @@ M365_SYNC_CHAINS = {
         {"type": "child_contains", "value": "3 Креслення в роботу"},
         {"type": "search_all_contains", "value": "Для КС"},
     ],
+
+    # --- переробки ---
+    "rework_pre": [
+        {"type": "child_contains", "value": "1 Креслення попередні"},
+        {"type": "search_all_contains", "value": "Для КС"},
+    ],
+    "rework_final": [
+        {"type": "child_contains", "value": "3 Креслення в роботу"},
+        {"type": "search_all_contains", "value": "Для К.С"},
+    ],
 }
