@@ -977,7 +977,17 @@
               <button id="calcFinalShortDownload" class="btn btn-outline-primary">
                 💾 Комерційна пропозиція (завантажити)
               </button>
+            </div>
+              <div class="mt-2 d-flex gap-2">
+                  <button type="button" id="btnSyncPrecalc" class="btn btn-warning">
+                    🔄 Синхронізувати (попередній)
+                  </button>
 
+                  <button type="button" id="btnSyncFinal" class="btn btn-warning">
+                    🔄 Синхронізувати (фінальний)
+                  </button>
+
+                  <span id="syncStatus" class="ms-2 text-muted"></span>
             </div>
       </div>
     {% endif %}
@@ -1115,6 +1125,61 @@ document.addEventListener("DOMContentLoaded", () => {
       window.location.href = url;
     });
   }
+   const btnSyncPrecalc = document.getElementById("btnSyncPrecalc");
+  const btnSyncFinal   = document.getElementById("btnSyncFinal");
+  const syncStatus     = document.getElementById("syncStatus");
+
+  // ВАЖЛИВО: додай у urls.py route з name="sync_internal_pdf"
+  const syncUrl = "{% url 'sync_internal_pdf' order.id %}";
+
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== "") {
+      const cookies = document.cookie.split(";");
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + "=")) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+
+  async function syncInternalPdf(mode) {
+    const markupVal   = parseFloat(document.getElementById("markup")?.value || 0) || 0;
+    const deliveryVal = parseFloat(document.getElementById("deliveryCost")?.value || 0) || 0;
+    const packingVal  = parseFloat(document.getElementById("packingCost")?.value  || 0) || 0;
+
+    syncStatus.textContent = "Синхронізація...";
+    const csrftoken = getCookie("csrftoken");
+
+    const resp = await fetch(syncUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrftoken,
+      },
+      body: JSON.stringify({
+        mode,                 // "precalc" або "final"
+        markup: markupVal,
+        delivery: deliveryVal,
+        packing: packingVal,
+      }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      syncStatus.textContent = data?.error || "Помилка синхронізації";
+      return;
+    }
+
+    syncStatus.textContent = `Готово ✅ Залито в папок: ${data.uploaded_to}`;
+  }
+
+  if (btnSyncPrecalc) btnSyncPrecalc.addEventListener("click", () => syncInternalPdf("precalc"));
+  if (btnSyncFinal)   btnSyncFinal.addEventListener("click", () => syncInternalPdf("final"));
 
   // ---- Галерея + мітки ----
   const mainImage   = document.getElementById("mainImage");

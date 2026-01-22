@@ -205,6 +205,7 @@ class Customer(models.Model):
 
 
 class Order(models.Model):
+
     STATUS_CHOICES = [
         ("in_progress", "В роботі"),
         ("completed", "Завершено"),
@@ -215,6 +216,18 @@ class Order(models.Model):
         ("paid", "Сплачено"),
         ("awaiting_payment", "Очікує оплату"),
     ]
+    WORK_TYPE_CHOICES = [
+        ("project", "Проєкт"),
+        ("rework", "Переробка"),
+    ]
+
+    work_type = models.CharField(
+        max_length=20,
+        choices=WORK_TYPE_CHOICES,
+        default="project",
+        db_index=True,
+        verbose_name="Тип (проєкт/переробка)",
+    )
     markup_percent = models.DecimalField(
         "Націнка за замовлення (%)",
         max_digits=6,

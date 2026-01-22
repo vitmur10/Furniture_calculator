@@ -29,6 +29,7 @@ urlpatterns = [
     path("m365/image/<int:image_id>/content/", views.m365_image_content, name="m365_image_content"),
     path("m365/image/<int:image_id>/thumb/", views.m365_image_thumb, name="m365_image_thumb"),
     path("m365/file/<int:file_id>/inline/", views.order_file_inline, name="order_file_inline"),
+    path("orders/<int:order_id>/sync-internal-pdf/", views.sync_internal_pdf, name="sync_internal_pdf"),
 
 ]
 

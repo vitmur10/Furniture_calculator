@@ -16,6 +16,19 @@ from doors.services.m365_graph import (
     search_in_folder,
 )
 
+IGNORED_CALC_FILE_MARKERS = [
+    "попередній_",
+    "фінальний_",
+    "комерційна_пропозиція",
+    "внутрішній_розрахунок",
+    "_розрахунок_",
+    "_кп_",
+]
+
+def is_own_generated_calc_file(filename: str) -> bool:
+    name = (filename or "").lower()
+    return any(marker in name for marker in IGNORED_CALC_FILE_MARKERS)
+
 # ----------------------------
 # Helpers
 # ----------------------------
@@ -176,6 +189,20 @@ def iter_files_recursive(drive_id: str, folder_id: str) -> Iterable[dict]:
                 yield it
 
 
+def detect_work_type(site: dict, site_name_fallback: str = "") -> str:
+    """
+    Визначає, це "project" чи "rework" по назві сайту.
+    Правило: якщо містить "Переробка" (case-sensitive як у тебе) -> rework.
+    """
+    site_display = (site.get("displayName", "") or site.get("name", "") or site_name_fallback or "").strip()
+
+    # можна зробити більш стійко до регістру:
+    # if "переробка" in site_display.lower():
+    if "Переробка" in site_display:
+        return "rework"
+    return "project"
+
+
 # ----------------------------
 # Command
 # ----------------------------
@@ -231,6 +258,9 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(f"Site not found: {site_name}"))
                 continue
 
+            # ✅ тут визначаємо тип роботи
+            work_type = detect_work_type(site, site_name_fallback=site_name)
+
             drive = pick_drive(site["id"], drive_name)
             if not drive:
                 self.stdout.write(self.style.WARNING(f"Drive '{drive_name}' not found in site '{site_name}'"))
@@ -244,6 +274,7 @@ class Command(BaseCommand):
                 project_candidates = project_candidates[:limit]
 
             self.stdout.write(self.style.NOTICE(f"Root folder candidates: {len(project_candidates)}"))
+            self.stdout.write(self.style.NOTICE(f"Detected work_type: {work_type}"))
 
             for folder in project_candidates:
                 folder_id = folder["id"]
@@ -271,6 +302,7 @@ class Command(BaseCommand):
                                 order_name=folder_name,
                                 order_number=make_order_number(folder_id),
                                 source="m365",
+                                work_type=work_type,  # ✅ NEW
                                 remote_site_id=site["id"],
                                 remote_drive_id=drive_id,
                                 remote_folder_id=folder_id,
@@ -282,6 +314,7 @@ class Command(BaseCommand):
                                 order_name=folder_name,
                                 order_number=f"M365-{uuid.uuid4().hex[:10].upper()}",
                                 source="m365",
+                                work_type=work_type,  # ✅ NEW
                                 remote_site_id=site["id"],
                                 remote_drive_id=drive_id,
                                 remote_folder_id=folder_id,
@@ -290,14 +323,26 @@ class Command(BaseCommand):
                             created_orders += 1
                     else:
                         changed = False
+                        update_fields = []
+
                         if order.order_name != folder_name:
                             order.order_name = folder_name
                             changed = True
+                            update_fields.append("order_name")
+
                         if order.remote_web_url != folder_url:
                             order.remote_web_url = folder_url
                             changed = True
+                            update_fields.append("remote_web_url")
+
+                        # ✅ NEW: оновлюємо тип
+                        if getattr(order, "work_type", None) != work_type:
+                            order.work_type = work_type
+                            changed = True
+                            update_fields.append("work_type")
+
                         if changed:
-                            order.save(update_fields=["order_name", "remote_web_url"])
+                            order.save(update_fields=update_fields)
                             updated_orders += 1
 
                     # Import from ALL leaf folders
@@ -328,6 +373,12 @@ class Command(BaseCommand):
                                 web_url = it.get("webUrl", "") or ""
                                 size = it.get("size") or 0
 
+                                # ❌ пропускаємо файли, які ми самі заливаємо
+                                if is_own_generated_calc_file(file_name):
+                                    continue
+
+                                web_url = it.get("webUrl", "") or ""
+                                size = it.get("size") or 0
                                 if _is_image(file_name):
                                     existing = OrderImage.objects.filter(
                                         remote_drive_id=drive_id,

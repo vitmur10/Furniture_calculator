@@ -2,6 +2,7 @@ import requests
 import msal
 from django.conf import settings
 from urllib.parse import quote
+
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 _app = None
@@ -48,6 +49,7 @@ def graph_get(path: str, **kwargs):
     # path типу: "/sites?search=*"
     return graph("GET", f"{GRAPH_BASE}{path}", **kwargs)
 
+
 def graph_get_all_pages(path: str) -> list:
     items = []
     url = f"{GRAPH_BASE}{path}"
@@ -87,3 +89,17 @@ def list_root_children(drive_id: str) -> list:
 def search_in_folder(drive_id: str, folder_id: str, q: str) -> list:
     q_enc = quote(q)
     return graph_get_all_pages(f"/drives/{drive_id}/items/{folder_id}/search(q='{q_enc}')")
+
+
+def graph_put(path: str, **kwargs):
+    # path типу: "/drives/{drive_id}/items/{folder_id}:/{filename}:/content"
+    return graph("PUT", f"{GRAPH_BASE}{path}", **kwargs)
+
+
+def upload_bytes_to_folder(drive_id: str, folder_id: str, filename: str, content: bytes,
+                           content_type="application/pdf"):
+    # overwrite/upload
+    safe_name = filename.replace("\\", "_").replace("/", "_")
+    path = f"/drives/{drive_id}/items/{folder_id}:/{safe_name}:/content"
+    headers = {"Content-Type": content_type}
+    return graph_put(path, data=content, headers=headers)
