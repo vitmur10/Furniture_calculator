@@ -6,7 +6,25 @@
       cursor: help;
       border-bottom: 1px dashed #0d6efd;
     }
+    #sketch-section{
+      flex: 0 0 420px;   /* ширина колонки */
+      width: 420px;
+      min-width: 420px;
+      max-width: 420px;
+    }
 
+    /* 4) Якщо embed/preview всередині лівої — йому теж min-width:0, щоб не ламав flex */
+    #pdfPreviewBox{
+      min-width: 0;
+    }
+
+    /* 5) ВАЖЛИВО: НЕ ховаємо сам #sketch-section ніякими collapsed стилями */
+    #sketch-section.collapsed{
+      display: block !important;
+      width: 420px !important;
+      min-width: 420px !important;
+      max-width: 420px !important;
+    }
     .ks-tooltip::after {
       content: attr(data-tooltip);
       position: absolute;
@@ -98,14 +116,6 @@
 .main-image-wrapper {
     position: relative;
 }
-
-  .order-sketch.collapsed {
-    flex: 0;
-    opacity: 0;
-    visibility: hidden;
-    width: 0;
-  }
-
   .order-sketch.dragging {
     cursor: grabbing;
   }
@@ -377,16 +387,23 @@
 
 <div class="order-layout">
 
-  <!-- 🔹 Ліва колонка: галерея фото + файли -->
-  <div class="order-sketch" id="sketch-section">
+{# ✅ ЛІВА ЧАСТИНА: ескіз + файли (ховається), PDF preview НЕ ховається #}
+
+<div class="order-sketch" id="sketch-section">
+
+  <div class="d-flex align-items-center gap-2 mb-2">
+    <button class="toggle-btn" id="toggleSketch" type="button">📉 Згорнути</button>
+    <button class="toggle-btn" id="restoreSketch" type="button" style="display:none;">📈 Показати</button>
+  </div>
+
+  {# ✅ ХОВАЄМО ТІЛЬКИ ЦЕ: фото # + # файли #}
+  <div id="sketchHidePart">
+
     {% if order.images.exists %}
       {% with first_img=order.images.all.0 %}
-        <button class="toggle-btn" id="toggleSketch">📉 Згорнути</button>
-
         <div class="main-image-wrapper" id="mainImageWrapper">
           <div class="main-image-inner" id="mainImageInner">
 
-            {# ✅ ЛОКАЛЬНЕ фото (якщо є) або ✅ M365 (якщо локального нема) #}
             {% if first_img.image %}
               <img
                 src="{{ first_img.image.url }}"
@@ -441,80 +458,76 @@
       <div class="text-muted small mb-2">Фото замовлення ще не завантажені</div>
     {% endif %}
 
-    {# 🔹 Файли (залиш як у тебе), але важливо: цей блок має бути ВСЕРЕДИНІ .order-sketch #}
-{% if order.files.all %}
-  <div class="mt-3 w-100">
-    <h6 class="fw-bold mb-2">Прикріплені файли:</h6>
+    {% if order.files.all %}
+      <div class="mt-3 w-100">
+        <h6 class="fw-bold mb-2">Прикріплені файли:</h6>
 
-    <ul class="list-unstyled small" id="filesList">
-      {% for f in order.files.all %}
-        <li class="mb-2 d-flex align-items-center gap-2">
-          <div class="flex-grow-1">
-            {% if f.source == "m365" %}
-              {{ f.remote_name|default:f.description }}
-            {% else %}
-              {{ f.description }}
-            {% endif %}
-          </div>
+        <ul class="list-unstyled small" id="filesList">
+          {% for f in order.files.all %}
+            <li class="mb-2 d-flex align-items-center gap-2">
+              <div class="flex-grow-1">
+                {% if f.source == "m365" %}
+                  {{ f.remote_name|default:f.description }}
+                {% else %}
+                  {{ f.description }}
+                {% endif %}
+              </div>
 
-          <!-- Перегляд -->
-            {% if f.source == "m365" %}
-              <button type="button"
-                      class="btn btn-sm btn-outline-secondary js-preview"
-                      data-preview-url="{% url 'order_file_inline' f.id %}">
-                👁️ Перегляд
-              </button>
-            {% elif f.file %}
-              <button type="button"
-                      class="btn btn-sm btn-outline-secondary js-preview"
-                      data-preview-url="{{ f.file.url }}">
-                👁️ Перегляд
-              </button>
-            {% endif %}
+              {% if f.source == "m365" %}
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary js-preview"
+                        data-preview-url="{% url 'order_file_inline' f.id %}">
+                  👁️ Перегляд
+                </button>
+              {% elif f.file %}
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary js-preview"
+                        data-preview-url="{{ f.file.url }}">
+                  👁️ Перегляд
+                </button>
+              {% endif %}
 
-          <!-- Скачати -->
-          {% if f.source == "m365" %}
-            <a class="btn btn-sm btn-outline-primary"
-               href="{% url 'order_file_download' f.id %}">
-              Скачати
-            </a>
-            {% if f.remote_web_url %}
-              <a class="btn btn-sm btn-outline-secondary"
-                 href="{{ f.remote_web_url }}" target="_blank">
-                Відкрити
-              </a>
-            {% endif %}
-          {% elif f.file %}
-            <a class="btn btn-sm btn-outline-primary" href="{{ f.file.url }}" download>
-              Скачати
-            </a>
-            <a class="btn btn-sm btn-outline-secondary" href="{{ f.file.url }}" target="_blank">
-              Відкрити
-            </a>
-          {% endif %}
-        </li>
-      {% endfor %}
-    </ul>
-
-    <!-- Вікно перегляду PDF -->
-        <div id="pdfPreviewBox" class="mt-3" style="display:none;">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <div class="fw-bold">Перегляд файлу</div>
-            <button type="button" id="closePreview" class="btn btn-sm btn-outline-secondary">✖</button>
-          </div>
-
-          <div class="file-preview" style="height: 600px;">
-            <embed id="pdfEmbed"
-                   src=""
-                   type="application/pdf"
-                   width="100%"
-                   height="100%" />
-          </div>
-        </div>
-  </div>
+              {% if f.source == "m365" %}
+                <a class="btn btn-sm btn-outline-primary"
+                   href="{% url 'order_file_download' f.id %}">
+                  Скачати
+                </a>
+                {% if f.remote_web_url %}
+                  <a class="btn btn-sm btn-outline-secondary"
+                     href="{{ f.remote_web_url }}" target="_blank">
+                    Відкрити
+                  </a>
+                {% endif %}
+              {% elif f.file %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ f.file.url }}" download>
+                  Скачати
+                </a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ f.file.url }}" target="_blank">
+                  Відкрити
+                </a>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
     {% endif %}
+
+  </div>
+  {# ✅ /sketchHidePart #}
+
+  {# ✅ ПЕРЕГЛЯД ФАЙЛУ НЕ ХОВАЄТЬСЯ (поза sketchHidePart і поза if order.files.all) #}
+  <div id="pdfPreviewBox" class="mt-3" style="display:none;">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="fw-bold">Перегляд файлу</div>
+      <button type="button" id="closePreview" class="btn btn-sm btn-outline-secondary">✖</button>
+    </div>
+
+    <div class="file-preview" style="height: 600px;">
+      <embed id="pdfEmbed" src="" type="application/pdf" width="100%" height="100%" />
+    </div>
   </div>
 
+</div>
   <!-- 🔹 Права колонка: форма замовлення -->
     {% if request.user.is_superuser %}
 
@@ -1137,13 +1150,6 @@ document.addEventListener("DOMContentLoaded", () => {
     btnFlat.click();
   }
 
-  // Згортання / показ ескізу
-  if (toggleBtn && restoreBtn && sketchSection) {
-    toggleBtn.addEventListener("click", () => {
-      sketchSection.classList.add("collapsed");
-      toggleBtn.style.display = "none";
-      restoreBtn.style.display = "block";
-    });
 
     restoreBtn.addEventListener("click", () => {
       sketchSection.classList.remove("collapsed");
@@ -1620,5 +1626,46 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!e.target.classList.contains("product-check")) return;
     syncQtyForCheckbox(e.target);
   });
+
+document.addEventListener("DOMContentLoaded", () => {
+  const hidePart = document.getElementById("sketchHidePart");
+  const sketchSection = document.getElementById("sketch-section");
+
+  let btnHide = document.getElementById("toggleSketch");
+  let btnShow = document.getElementById("restoreSketch");
+
+  if (!hidePart || !sketchSection || !btnHide || !btnShow) return;
+
+  // 1) Знімаємо можливі "collapsed" класи, які ховають ВСЕ
+  sketchSection.classList.remove("collapsed");
+
+  // 2) ВАЖЛИВО: прибираємо старі event listeners (clone node trick)
+  const btnHideClean = btnHide.cloneNode(true);
+  btnHide.parentNode.replaceChild(btnHideClean, btnHide);
+  btnHide = btnHideClean;
+
+  const btnShowClean = btnShow.cloneNode(true);
+  btnShow.parentNode.replaceChild(btnShowClean, btnShow);
+  btnShow = btnShowClean;
+
+  // 3) Початковий стан
+  btnShow.style.display = "none";
+  btnHide.style.display = "inline-block";
+
+  // 4) Нові (єдині) хендлери: ховаємо ТІЛЬКИ hidePart
+  btnHide.addEventListener("click", (e) => {
+    e.preventDefault();
+    hidePart.style.display = "none";
+    btnHide.style.display = "none";
+    btnShow.style.display = "inline-block";
+  });
+
+  btnShow.addEventListener("click", (e) => {
+    e.preventDefault();
+    hidePart.style.display = "";
+    btnShow.style.display = "none";
+    btnHide.style.display = "inline-block";
+  });
+});
 </script>
 {% endblock %}
