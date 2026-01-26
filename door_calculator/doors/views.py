@@ -7,7 +7,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Sum, Q
-from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest, FileResponse, StreamingHttpResponse, Http404
+from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest, FileResponse, StreamingHttpResponse, Http404,QueryDict
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -2381,10 +2381,14 @@ def sync_internal_pdf(request, order_id):
         "packing": 200
       }
 
-    Синхронізує 3 PDF в Teams/SharePoint у відповідні папки "Для КС":
+    Синхронізує 3 PDF в Teams/SharePoint у відповідні папки:
       - detailed (default)
-      - simple (?simple=1)
+      - offer (?simple=1)
       - internal (?internal=1)
+
+    Логіка папок:
+      - work_type="project": шукає leaf-папки "Для КС" (може бути кілька)
+      - work_type="rework": знаходить 1 destination папку в корені проєкту
     """
     order = Order.objects.filter(id=order_id).first()
     if not order:
@@ -2402,18 +2406,58 @@ def sync_internal_pdf(request, order_id):
     if mode not in ("precalc", "final"):
         return JsonResponse({"ok": False, "error": "Invalid mode. Use 'precalc' or 'final'."}, status=400)
 
-    markup = payload.get("markup", 0)
-    delivery = payload.get("delivery", 0)
-    packing = payload.get("packing", 0)
+    # Безпечно дістаємо числа (щоб не падало на "10" / "" / None)
+    def _num(v, default=0):
+        try:
+            if v is None or v == "":
+                return default
+            return float(v)
+        except Exception:
+            return default
 
-    # 1) знайти цільові папки "Для КС" (звичайні проєкти)
-    target_folders = resolve_target_folders_for_normal_project(order, mode)
-    if not target_folders:
-        return JsonResponse({"ok": False, "error": f"No target folders 'Для КС' found for mode={mode}"}, status=404)
+    markup = _num(payload.get("markup", 0), 0)
+    delivery = _num(payload.get("delivery", 0), 0)
+    packing = _num(payload.get("packing", 0), 0)
+
+    # 1) Розв'язуємо цільові папки
+    if order.work_type == "rework":
+        # Для переробок: рівно 1 destination папка
+        is_final = (mode == "final")
+        try:
+            dest = resolve_rework_destination_folder(
+                drive_id=order.remote_drive_id,
+                project_folder_id=order.remote_folder_id,
+                is_final=is_final,
+            )
+        except RuntimeError as e:
+            return JsonResponse({"ok": False, "error": str(e)}, status=404)
+
+        target_folders = [dest]
+    else:
+        # Для звичайних проєктів: може бути багато leaf-папок "Для КС"
+        target_folders = resolve_target_folders_for_normal_project(order, mode)
+        # якщо знайшли більше 1 папки — попросити вибір (тільки для project)
+        chosen_id = (payload.get("target_folder_id") or "").strip()
+
+        if order.work_type != "rework" and len(target_folders) > 1 and not chosen_id:
+            return JsonResponse({
+                "ok": False,
+                "error": "Multiple target folders found. Please choose one.",
+                "candidates": [
+                    {"id": x.get("id"), "name": x.get("name"), "webUrl": x.get("webUrl")}
+                    for x in target_folders
+                    if x and x.get("id")
+                ],
+            }, status=409)
+
+        # якщо користувач передав target_folder_id — звузити список до 1
+        if order.work_type != "rework" and chosen_id:
+            by_id = {x["id"]: x for x in target_folders if x and x.get("id")}
+            if chosen_id not in by_id:
+                return JsonResponse({"ok": False, "error": "target_folder_id is not among candidates"}, status=400)
+            target_folders = [by_id[chosen_id]]
 
     # Helper: отримати PDF bytes через generate_pdf з підміною request.GET
-    from django.http import QueryDict
-
     def _render_pdf_bytes(get_params: dict) -> bytes:
         old_get = request.GET
         q = QueryDict(mutable=True)
@@ -2423,17 +2467,15 @@ def sync_internal_pdf(request, order_id):
         try:
             resp = generate_pdf(request, order_id)
 
-            # generate_pdf може повернути HttpResponse або FileResponse.
-            # Для нашого sync ми НЕ передаємо download=1, тому очікуємо HttpResponse з .content.
             content = getattr(resp, "content", None)
             if content is None:
-                # fallback (на випадок якщо десь повернеться streaming response)
+                # fallback: якщо раптом streaming response
                 content = b"".join(resp.streaming_content)
-            return content
+            return content or b""
         finally:
             request.GET = old_get
 
-    # 2) генеруємо 3 PDF (без download!)
+    # 2) Генеруємо 3 PDF (без download!)
     base_params = {
         "markup": markup,
         "delivery": delivery,
@@ -2443,21 +2485,9 @@ def sync_internal_pdf(request, order_id):
     mode_label = "Попередній" if mode == "precalc" else "Фінальний"
 
     pdfs = [
-        (
-            "detailed",
-            {**base_params},
-            f"{mode_label}_Детальний_{order.order_number}.pdf",
-        ),
-        (
-            "offer",
-            {**base_params, "simple": 1},
-            f"{mode_label}_Комерційна_пропозиція_{order.order_number}.pdf",
-        ),
-        (
-            "internal",
-            {**base_params, "internal": 1},
-            f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf",
-        ),
+        ("detailed", {**base_params}, f"{mode_label}_Детальний_{order.order_number}.pdf"),
+        ("offer", {**base_params, "simple": 1}, f"{mode_label}_Комерційна_пропозиція_{order.order_number}.pdf"),
+        ("internal", {**base_params, "internal": 1}, f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
     ]
 
     rendered = []
@@ -2467,26 +2497,34 @@ def sync_internal_pdf(request, order_id):
             return JsonResponse({"ok": False, "error": f"Failed to render PDF: {label}"}, status=500)
         rendered.append((label, filename, pdf_bytes))
 
-    # 3) заливаємо УСІ 3 PDF у КОЖНУ знайдену папку "Для КС" відповідного режиму
+    # 3) Заливаємо 3 PDF у кожну цільову папку
     uploaded_folders = 0
+    uploaded_files = []
+
     for folder in target_folders:
+        folder_id = folder.get("id")
+        if not folder_id:
+            continue
+
         for label, filename, pdf_bytes in rendered:
             upload_bytes_to_folder(
                 drive_id=order.remote_drive_id,
-                folder_id=folder["id"],
+                folder_id=folder_id,
                 filename=filename,
                 content=pdf_bytes,
                 content_type="application/pdf",
             )
+            uploaded_files.append(filename)
+
         uploaded_folders += 1
 
     return JsonResponse({
         "ok": True,
         "mode": mode,
+        "work_type": order.work_type,
         "uploaded_to": uploaded_folders,
         "files": [f for _, f, _ in rendered],
     })
-
 
 def find_folder_contains_all(children, *needles: str):
     nn = [_lower(x) for x in needles if x]

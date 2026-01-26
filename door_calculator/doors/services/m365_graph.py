@@ -2,7 +2,8 @@ import requests
 import msal
 from django.conf import settings
 from urllib.parse import quote
-
+import time
+import random
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 _app = None
@@ -32,18 +33,49 @@ def get_app_token() -> str:
 
     return result["access_token"]
 
+RETRY_STATUS = {429, 503, 504}
 
-def graph(method: str, url: str, **kwargs):
-    token = get_app_token()
-    headers = kwargs.pop("headers", {})
-    headers["Authorization"] = f"Bearer {token}"
+def graph(method: str, url_or_path: str, *, token: str = None, headers=None, params=None, data=None, json=None, timeout=60):
+    url = url_or_path if url_or_path.startswith("http") else (GRAPH_BASE + url_or_path)
 
-    r = requests.request(method, url, headers=headers, timeout=60, **kwargs)
-    if not r.ok:
-        raise RuntimeError(f"HTTP {r.status_code}: {r.text}")
+    if token is None:
+        token = get_app_token()  # <-- твоя функція
 
-    return r.json() if r.content else None
+    if not token or not str(token).strip():
+        raise RuntimeError("M365 Graph token is empty. Check get_app_token() and app credentials.")
 
+    h = dict(headers or {})
+    h["Authorization"] = f"Bearer {token}"
+    h.setdefault("Accept", "application/json")
+
+    max_attempts = 6
+    base_delay = 1.0
+
+    for attempt in range(1, max_attempts + 1):
+        r = requests.request(method, url, headers=h, params=params, data=data, json=json, timeout=timeout)
+
+        if r.status_code in RETRY_STATUS:
+            retry_after = r.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    delay = float(retry_after)
+                except Exception:
+                    delay = base_delay
+            else:
+                delay = min(base_delay * (2 ** (attempt - 1)), 30.0) + random.uniform(0, 0.5)
+
+            if attempt == max_attempts:
+                raise RuntimeError(f"HTTP {r.status_code}: {r.text}")
+
+            time.sleep(delay)
+            continue
+
+        if r.status_code >= 400:
+            raise RuntimeError(f"HTTP {r.status_code}: {r.text}")
+
+        if not r.text:
+            return {}
+        return r.json()
 
 def graph_get(path: str, **kwargs):
     # path типу: "/sites?search=*"

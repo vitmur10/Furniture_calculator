@@ -978,17 +978,20 @@
                 💾 Комерційна пропозиція (завантажити)
               </button>
             </div>
-              <div class="mt-2 d-flex gap-2">
-                  <button type="button" id="btnSyncPrecalc" class="btn btn-warning">
-                    🔄 Синхронізувати (попередній)
-                  </button>
+            <div class="mt-2 d-flex gap-2">
+              <button type="button" id="btnSyncPrecalc" class="btn btn-warning">
+                🔄 Синхронізувати (попередній)
+              </button>
 
-                  <button type="button" id="btnSyncFinal" class="btn btn-warning">
-                    🔄 Синхронізувати (фінальний)
-                  </button>
+              <button type="button" id="btnSyncFinal" class="btn btn-warning">
+                🔄 Синхронізувати (в роботу)
+              </button>
 
-                  <span id="syncStatus" class="ms-2 text-muted"></span>
+              <span id="syncStatus" class="ms-2 text-muted"></span>
             </div>
+
+            <!-- контейнер для вибору папки -->
+            <div id="syncFolderChooser" class="mt-3 d-flex flex-wrap gap-2"></div>
       </div>
     {% endif %}
   </div>
@@ -1012,7 +1015,91 @@
     {% endfor %}
   };
 </script>
+<script>
+const syncStatus = document.getElementById("syncStatus");
+const chooser = document.getElementById("syncFolderChooser");
 
+const orderId = "{{ order.id }}";  // або як ти передаєш id
+const syncUrl = `/orders/${orderId}/sync-internal-pdf/`;
+
+function setStatus(text, cls = "text-muted") {
+  syncStatus.className = "ms-2 " + cls;
+  syncStatus.textContent = text;
+}
+
+async function runSync(mode, extraPayload = {}) {
+  chooser.innerHTML = "";
+  setStatus("Синхронізація…", "text-muted");
+
+  const payload = {
+    mode: mode,
+    markup: window.ORDER_MARKUP || 0,
+    delivery: window.ORDER_DELIVERY || 0,
+    packing: window.ORDER_PACKING || 0,
+    ...extraPayload
+  };
+
+  const resp = await fetch(syncUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": "{{ csrf_token }}"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await resp.json();
+
+  // ✅ Успіх
+  if (resp.ok && data.ok) {
+    setStatus(`✅ Синхронізовано (${data.uploaded_to} папк.)`, "text-success");
+    return;
+  }
+
+  // 🔁 Потрібен вибір папки
+  if (resp.status === 409 && data.candidates) {
+    setStatus("Оберіть папку для синхронізації:", "text-warning");
+    renderFolderButtons(mode, data.candidates);
+    return;
+  }
+
+  // ❌ Помилка
+  setStatus(`❌ ${data.error || "Помилка синхронізації"}`, "text-danger");
+}
+
+function renderFolderButtons(mode, folders) {
+  chooser.innerHTML = "";
+
+  folders.forEach(f => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn btn-outline-primary btn-sm";
+    btn.textContent = f.name || "Без назви";
+    btn.title = f.webUrl || "";
+
+    btn.onclick = () => {
+      runSync(mode, { target_folder_id: f.id });
+    };
+
+    chooser.appendChild(btn);
+  });
+
+  // кнопка скасування
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn btn-outline-secondary btn-sm";
+  cancel.textContent = "✖ Скасувати";
+  cancel.onclick = () => {
+    chooser.innerHTML = "";
+    setStatus("Скасовано", "text-muted");
+  };
+  chooser.appendChild(cancel);
+}
+
+// кнопки старту
+document.getElementById("btnSyncPrecalc").onclick = () => runSync("precalc");
+document.getElementById("btnSyncFinal").onclick   = () => runSync("final");
+</script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   const toggleBtn     = document.getElementById("toggleSketch");

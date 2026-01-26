@@ -1,7 +1,7 @@
 services:
   web:
     build: .
-    env_file: .env
+    env_file: door_calculator/.env
     depends_on:
       db:
         condition: service_healthy
@@ -19,7 +19,7 @@ services:
 
   worker_m365:
     build: .
-    env_file: .env
+    env_file: door_calculator/.env
     depends_on:
       db:
         condition: service_healthy
@@ -28,7 +28,7 @@ services:
 
   db:
     image: postgres:16
-    env_file: .env
+    env_file: door_calculator/.env
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

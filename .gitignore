@@ -2,4 +2,4 @@
 venv
 .idea
 /door_calculator/media/
-/.env
+/door_calculator/.env
