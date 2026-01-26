@@ -22,7 +22,7 @@ M365_CLIENT_SECRET = os.getenv("M365_CLIENT_SECRET", "")
 M365_AUTHORITY = f"https://login.microsoftonline.com/{M365_TENANT_ID}"
 M365_SCOPE = ["https://graph.microsoft.com/.default"]
 
-raw_sites = os.getenv("M365_SITE_DISPLAY_NAMES", "Проекти 2025,Переробка профілю 2025")
+raw_sites = os.getenv("M365_SITE_DISPLAY_NAMES", "Проекти 2026,Переробка профілю 2026")
 M365_SITE_DISPLAY_NAMES = [s.strip() for s in raw_sites.split(",") if s.strip()]
 M365_DRIVE_NAME = os.getenv("M365_DRIVE_NAME", "Документи")
 M365_ORDER_ROOT_FOLDER = os.getenv("M365_ORDER_ROOT_FOLDER", "Main")  # якщо замовлення НЕ в корені (типу "Main"), інакше пусто
@@ -34,7 +34,7 @@ M365_TECH_KEYWORD = os.getenv("M365_TECH_KEYWORD", "Чертежи в работ
 SECRET_KEY = "django-insecure-fojb6-3@+u%rw5r2#)i5*3ra%4i-wd%2ne^*--(@vfa@b&-v0s"
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DEBUG", True)
 
 ALLOWED_HOSTS = ["4f62124b6562.ngrok-free.app", "localhost", "127.0.0.1"]
 

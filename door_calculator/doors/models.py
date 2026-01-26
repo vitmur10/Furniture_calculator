@@ -1,5 +1,4 @@
 from decimal import Decimal, ROUND_HALF_UP
-
 from django.db import models
 
 
@@ -58,24 +57,30 @@ class Product(models.Model):
         ordering = ["category", "name"]
 
     def __str__(self):
-        return self.category.name if self.category else "No category"
+        return self.category.name if self.category else "Без категорії"
 
 
 class Addition(models.Model):
-    name = models.CharField(max_length=255)
-    ks_value = models.FloatField()
+    name = models.CharField("Назва доповнення", max_length=255)
+    ks_value = models.FloatField("Значення к/с")
 
-    # де доступне доповнення
     applies_globally = models.BooleanField(
+        "Доступне для всіх",
         default=True,
         help_text="Якщо увімкнено — доступне для всіх виробів."
     )
     categories = models.ManyToManyField(
-        Category, related_name="additions", blank=True,
+        Category,
+        related_name="additions",
+        blank=True,
+        verbose_name="Категорії",
         help_text="Доступне для виробів цих категорій."
     )
     products = models.ManyToManyField(
-        Product, related_name="additions", blank=True,
+        Product,
+        related_name="additions",
+        blank=True,
+        verbose_name="Вироби",
         help_text="Доступне для конкретних виробів."
     )
 
@@ -83,46 +88,46 @@ class Addition(models.Model):
         verbose_name = "Доповнення"
         verbose_name_plural = "Доповнення"
 
-    def __str__(self):
-        return self.name
-
 
 class Coefficient(models.Model):
-    name = models.CharField(max_length=255)
-    value = models.FloatField(default=1.0)
+    name = models.CharField("Назва коефіцієнта", max_length=255)
+    value = models.FloatField("Значення", default=1.0)
 
-    # де доступний коефіцієнт
     applies_globally = models.BooleanField(
+        "Доступний для всіх",
         default=True,
-        help_text="Якщо увімкнено — доступний для всіх виробів, незалежно від зв’язків нижче."
+        help_text="Якщо увімкнено — доступний для всіх виробів."
     )
     categories = models.ManyToManyField(
-        Category, related_name="coefficients", blank=True,
-        help_text="Якщо вказано — коефіцієнт доступний для виробів цих категорій."
+        Category,
+        related_name="coefficients",
+        blank=True,
+        verbose_name="Категорії"
     )
     products = models.ManyToManyField(
-        Product, related_name="coefficients", blank=True,
-        help_text="Якщо вказано — коефіцієнт доступний для цих конкретних виробів."
+        Product,
+        related_name="coefficients",
+        blank=True,
+        verbose_name="Вироби"
     )
 
     class Meta:
         verbose_name = "Коефіцієнт"
         verbose_name_plural = "Коефіцієнти"
 
-    def __str__(self):
-        return f"{self.name} ×{self.value}"
-
 
 class Rate(models.Model):
-    price_per_ks = models.DecimalField(max_digits=10, decimal_places=2, default=10.00)
-    updated_at = models.DateTimeField(auto_now=True)
+    price_per_ks = models.DecimalField(
+        "Вартість за 1 к/с",
+        max_digits=10,
+        decimal_places=2,
+        default=10.00
+    )
+    updated_at = models.DateTimeField("Оновлено", auto_now=True)
 
     class Meta:
-        verbose_name = "Вартість 1 к/с"
-        verbose_name_plural = "Вартість 1 к/с"
-
-    def __str__(self):
-        return f"{self.price_per_ks} грн/к.с."
+        verbose_name = "Тариф"
+        verbose_name_plural = "Тарифи"
 
 
 class Customer(models.Model):
@@ -220,7 +225,14 @@ class Order(models.Model):
         ("project", "Проєкт"),
         ("rework", "Переробка"),
     ]
-
+    price_per_ks = models.DecimalField(
+        "Ціна за 1 к/с (зафіксована)",
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Фіксується при створенні замовлення (або при першому розрахунку), щоб зміна Rate не впливала на старі замовлення.",
+    )
     work_type = models.CharField(
         max_length=20,
         choices=WORK_TYPE_CHOICES,
@@ -258,7 +270,12 @@ class Order(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="in_progress")
     status_finance = models.CharField(max_length=20, choices=STATUS_CHOICES_FINANCE, default="postponed")
     sketch = models.ImageField(upload_to="sketches/", blank=True, null=True)
-    source = models.CharField(max_length=20, default="local")  # local | m365
+    source = models.CharField(
+        "Джерело",
+        max_length=20,
+        default="local",
+        help_text="local — локально, m365 — Microsoft 365"
+    )
     remote_site_id = models.CharField(max_length=255, blank=True, null=True)
     remote_drive_id = models.CharField(max_length=255, blank=True, null=True)
     remote_folder_id = models.CharField(max_length=255, blank=True, null=True)
@@ -266,6 +283,11 @@ class Order(models.Model):
 
     def __str__(self):
         return f"Замовлення №{self.order_number}"
+
+    class Meta:
+        verbose_name = "Замовлення"
+        verbose_name_plural = "Замовлення"
+        ordering = ["-created_at"]
 
 
 class OrderItemProduct(models.Model):
@@ -275,6 +297,8 @@ class OrderItemProduct(models.Model):
 
     class Meta:
         unique_together = ("order_item", "product")
+        verbose_name = "Виріб у позиції"
+        verbose_name_plural = "Вироби у позиціях"
 
 
 class OrderItem(models.Model):
@@ -326,15 +350,16 @@ class OrderItem(models.Model):
             return Decimal(str(self.markup_percent))
         return Decimal(str(getattr(self.order, "markup_percent", 0) or 0))
 
-    def base_cost(self) -> Decimal:
-        """
-        Собівартість без націнки (чисто по к/с * коеф * тариф).
-        """
-        base_ks, coef = self.total_ks()
-        rate = Rate.objects.first()
-        rate_val = Decimal(str(rate.price_per_ks)) if rate else Decimal("0")
-        value = Decimal(str(base_ks)) * Decimal(str(coef)) * rate_val
-        return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    def base_cost(self):
+        ks = self.ks_effective()  # або self.total_ks() якщо так задумано
+        # беремо зафіксований тариф із замовлення, інакше fallback на Rate
+        if self.order and self.order.price_per_ks is not None:
+            price_per_ks = Decimal(str(self.order.price_per_ks))
+        else:
+            rate = Rate.objects.first()
+            price_per_ks = Decimal(str(rate.price_per_ks)) if rate else Decimal("0")
+
+        return ks * price_per_ks
 
     def total_cost(self) -> float:
         """
@@ -363,6 +388,9 @@ class OrderItem(models.Model):
     def __str__(self):
         return self.name or f"Позиція {self.id}"
 
+    class Meta:
+        verbose_name = "Позиція замовлення"
+        verbose_name_plural = "Позиції замовлення"
 
 class OrderImage(models.Model):
     """Фото замовлення з Microsoft 365 (Teams/SharePoint)"""
@@ -379,6 +407,8 @@ class OrderImage(models.Model):
     remote_size = models.BigIntegerField(blank=True, null=True)
 
     class Meta:
+        verbose_name = "Фото замовлення"
+        verbose_name_plural = "Фото замовлення"
         constraints = [
             models.UniqueConstraint(
                 fields=["remote_drive_id", "remote_item_id"],
@@ -425,6 +455,10 @@ class OrderImageMarker(models.Model):
     def __str__(self):
         return f"{self.image.id} – {self.item or 'без позиції'} ({self.x}%, {self.y}%)"
 
+    class Meta:
+        verbose_name = "Мітка на фото"
+        verbose_name_plural = "Мітки на фото"
+
 
 class OrderFile(models.Model):
     SOURCE_CHOICES = [
@@ -448,6 +482,8 @@ class OrderFile(models.Model):
     remote_size = models.BigIntegerField(blank=True, null=True)
 
     class Meta:
+        verbose_name = "Файл замовлення"
+        verbose_name_plural = "Файли замовлення"
         constraints = [
             models.UniqueConstraint(
                 fields=["source", "remote_drive_id", "remote_item_id"],
@@ -473,8 +509,9 @@ class OrderProgress(models.Model):
         related_name="problem_progresses",
         verbose_name="Позиції, які неможливо виконати",
     )
-
     class Meta:
+        verbose_name = "Прогрес замовлення"
+        verbose_name_plural = "Прогрес замовлень"
         ordering = ["-date"]
 
     def __str__(self):
@@ -492,6 +529,10 @@ class AdditionItem(models.Model):
     def __str__(self):
         return f"{self.addition.name} ×{self.quantity}"
 
+    class Meta:
+        verbose_name = "Доповнення в позиції"
+        verbose_name_plural = "Доповнення в позиціях"
+
 
 class Worker(models.Model):
     name = models.CharField(max_length=100)
@@ -499,6 +540,11 @@ class Worker(models.Model):
 
     def __str__(self):
         return self.name
+
+    class Meta:
+        verbose_name = "Працівник"
+        verbose_name_plural = "Працівники"
+        ordering = ["name"]
 
 
 class WorkLog(models.Model):
@@ -510,6 +556,11 @@ class WorkLog(models.Model):
 
     def __str__(self):
         return f"{self.worker.name} — {self.date}"
+
+    class Meta:
+        verbose_name = "Журнал робіт"
+        verbose_name_plural = "Журнали робіт"
+        ordering = ["-date"]
 
 
 class ItemProgress(models.Model):

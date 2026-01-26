@@ -620,7 +620,7 @@
     <form method="post">
       {% csrf_token %}
         <div class="mb-3">
-          <label class="form-label fw-bold">Назва / номер позиції</label>
+          <label class="form-label fw-bold">Назва / номер конструкції</label>
 
           <div class="d-flex gap-2">
             <!-- Сюди підставлятимемо номер + назву категорії -->
@@ -724,7 +724,7 @@
       </div>
 
       <div class="mb-3">
-        <label class="form-label fw-bold">Кількість позицій:</label>
+        <label class="form-label fw-bold">Кількість конструкцій:</label>
         <input type="number" name="item_qty" min="1" value="1" class="form-control" required>
       </div>
 
@@ -753,7 +753,7 @@
       </div>-->
 
       <div class="text-center mb-4">
-        <button type="submit" class="btn btn-danger w-100 py-2">➕ Додати позицію</button>
+        <button type="submit" class="btn btn-danger w-100 py-2">➕ Додати конструкцію</button>
       </div>
     </form>
       {% endif %}
@@ -774,7 +774,7 @@
                placeholder="За замовчуванням">
         <button type="submit" class="btn btn-primary">💾</button>
       </div>
-      <small class="text-muted">Fallback для порожніх позицій</small>
+      <small class="text-muted">Fallback для порожніх конструкцій</small>
     </form>
   </div>
       <!-- Коефіцієнти -->
@@ -802,7 +802,7 @@
       <div>
         <label class="form-label fw-bold mb-1">Застосувати</label>
         <select name="bulk_scope" class="form-select">
-          <option value="all">Всім позиціям</option>
+          <option value="all">Всім конструкціям</option>
           <option value="selected">Лише вибраним</option>
         </select>
       </div>
@@ -830,7 +830,7 @@
               <tr>
                 <th>№</th>
                 <th>Фото</th>
-                <th>Позиція</th>
+                <th>Конструкція</th>
                 <th>К/С (розрахунок)</th>
                 <th>Ціна</th>
                 <th>Дія</th>
