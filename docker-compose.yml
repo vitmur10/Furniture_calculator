@@ -1,0 +1,43 @@
+services:
+  web:
+    build: .
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "
+      python manage.py migrate &&
+      python manage.py collectstatic --noinput &&
+      gunicorn door_calculator.wsgi:application --bind 0.0.0.0:8000
+      "
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+
+  worker_m365:
+    build: .
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python manage.py sync_m365_orders --watch
+    restart: always
+
+  db:
+    image: postgres:16
+    env_file: .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  static_volume:
+  media_volume:
