@@ -117,7 +117,7 @@ def order_list(request):
     status = request.GET.get("status") or ""
     status_finance = request.GET.get("status_finance") or ""
     order_name = request.GET.get("order_name") or ""
-
+    work_type = request.GET.get("work_type") or ""
     if start_date:
         orders = orders.filter(created_at__date__gte=start_date)
     if end_date:
@@ -129,7 +129,8 @@ def order_list(request):
     if order_name:
         # фільтр по точній назві з дропдауну
         orders = orders.filter(order_name=order_name)
-
+    if work_type:
+        orders = orders.filter(work_type=work_type)
     # 🔹 Список доступних назв замовлень для фільтра (тільки не пусті)
     order_name_choices = (
         Order.objects
@@ -144,7 +145,8 @@ def order_list(request):
         "orders": orders,
         "status_choices": Order.STATUS_CHOICES,
         "status_finance_choices": Order.STATUS_CHOICES_FINANCE,
-        "order_name_choices": order_name_choices,  # 👈 додаємо
+        "order_name_choices": order_name_choices,
+        "work_type_choices": Order.WORK_TYPE_CHOICES,
     }
     return render(request, "doors/order_list.html", context)
 
@@ -794,17 +796,22 @@ def build_item_formula_parts(it):
 
     qty = Decimal(str(it.quantity or 1))
 
-    coef = Decimal("1.0")
-    for c in it.coefficients.all():
-        coef += Decimal(str(c.value or 0))
+    coef = sum(
+        (Decimal(str(c.value or 0)) for c in it.coefficients.all()),
+        Decimal("0.0")
+    )
 
     products_formula = " + ".join(prod_terms) if prod_terms else "0.00"
     adds_formula = " + ".join(add_terms) if add_terms else "0.00"
 
     ks_base = (products_sum + adds_sum) * qty
+
+    # coef тільки як множник, БЕЗ 1+
     ks_effective = _q2(ks_base * coef)
 
-    ks_formula = f"(({products_formula}) + ({adds_formula})) × {qty} × {coef:.2f}"
+    ks_formula = f"(({products_formula}) + ({adds_formula})) × {qty}"
+
+    coef_ui = _q2(coef) if coef != 0 else Decimal("0.00")
 
     return {
         "products_sum": _q2(products_sum),
@@ -812,9 +819,9 @@ def build_item_formula_parts(it):
         "adds_sum": _q2(adds_sum),
         "adds_terms": adds_formula,
         "qty": qty,
-        "coef": _q2(coef),
+        "coef": coef_ui,  # ✅ 0.00 або сума коефіцієнтів
         "ks_effective": ks_effective,
-        "ks_formula": ks_formula,
+        "ks_formula": ks_formula,  # ✅ без коеф частини
     }
 
 

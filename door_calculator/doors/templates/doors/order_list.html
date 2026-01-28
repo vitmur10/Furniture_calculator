@@ -22,6 +22,19 @@
                value="{{ request.GET.end_date }}">
       </div>
 
+        <div class="col-md-3">
+          <label class="form-label fw-bold">Тип проєкту</label>
+          <select name="work_type" class="form-select">
+            <option value="">Усі</option>
+            {% for key, label in work_type_choices %}
+              <option value="{{ key }}"
+                      {% if request.GET.work_type == key %}selected{% endif %}>
+                {{ label }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
       <div class="col-md-3">
         <label class="form-label fw-bold">Статус замовлення</label>
         <select name="status" class="form-select">

@@ -1150,6 +1150,13 @@ document.addEventListener("DOMContentLoaded", () => {
     btnFlat.click();
   }
 
+  // Згортання / показ ескізу
+  if (toggleBtn && restoreBtn && sketchSection) {
+    toggleBtn.addEventListener("click", () => {
+      sketchSection.classList.add("collapsed");
+      toggleBtn.style.display = "none";
+      restoreBtn.style.display = "block";
+    });
 
     restoreBtn.addEventListener("click", () => {
       sketchSection.classList.remove("collapsed");
