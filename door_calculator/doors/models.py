@@ -361,29 +361,39 @@ class OrderItem(models.Model):
 
         return ks * price_per_ks
 
-    def total_cost(self) -> float:
-        """
-        Фінальна ціна з націнкою (позиційною або замовлення).
-        """
-        base = self.base_cost()
-        m = self.effective_markup_percent()
-        total = base * (Decimal("1") + (m / Decimal("100")))
-        total = total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        return float(total)
-
     def total_ks(self):
-        base_ks = sum(p.base_ks for p in self.products.all())
-        add_ks = sum(a.total_ks() for a in self.addition_items.all())
-        coef = 1
+        products_ks = Decimal("0")
+        for op in self.product_items.select_related("product").all():
+            base = Decimal(str(op.product.base_ks or 0))
+            qty = int(op.quantity or 1)
+            products_ks += base * Decimal(qty)
+
+        adds_ks = Decimal("0")
+        for ai in self.addition_items.select_related("addition").all():
+            adds_ks += Decimal(str(ai.total_ks() or 0))
+
+        coef = Decimal("1.0")
         for c in self.coefficients.all():
-            coef *= c.value
-        return (base_ks + add_ks) * self.quantity, coef
+            coef *= Decimal(str(c.value or 1))
+
+        qty_item = Decimal(str(self.quantity or 1))
+        ks_base = (products_ks + adds_ks) * qty_item
+
+        return ks_base, coef
 
     def total_cost(self):
-        base_ks, coef = self.total_ks()
-        rate = Rate.objects.first()
-        rate_val = float(rate.price_per_ks) if rate else 0
-        return round(base_ks * coef * rate_val, 2)
+        ks_base, coef = self.total_ks()
+        ks_effective = ks_base * coef
+
+        rate = Decimal(str(self.order.price_per_ks or 0))
+        base_price = ks_effective * rate
+
+        markup = self.markup_percent
+        if markup is None:
+            markup = self.order.markup_percent or Decimal("0")
+
+        return base_price * (Decimal("1") + (Decimal(str(markup)) / Decimal("100")))
+
 
     def __str__(self):
         return self.name or f"Позиція {self.id}"

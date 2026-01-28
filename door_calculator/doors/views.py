@@ -34,7 +34,8 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from django.utils.html import strip_tags
 import logging
 from math import ceil
-
+from decimal import Decimal, ROUND_HALF_UP
+from django.shortcuts import get_object_or_404, redirect, render
 logger = logging.getLogger(__name__)
 
 
@@ -244,6 +245,8 @@ def get_item_color(item_id: int | None) -> str:
     return ITEM_COLOR_PALETTE[idx]
 
 
+
+
 def calculate_order(request, order_id):
     order = get_object_or_404(Order, id=order_id)
 
@@ -254,13 +257,34 @@ def calculate_order(request, order_id):
     rate_obj = Rate.objects.first()
     current_rate = Decimal(str(rate_obj.price_per_ks)) if rate_obj else Decimal("0")
 
+    logger.warning(
+        "[ORDER %s] ENTER calculate_order method=%s current_rate=%s order.price_per_ks(db)=%s",
+        order.id,
+        request.method,
+        current_rate,
+        order.price_per_ks,
+    )
+
     # ✅ фіксуємо тариф в замовленні ОДИН раз
     if order.price_per_ks is None:
         order.price_per_ks = current_rate
         order.save(update_fields=["price_per_ks"])
+        logger.warning(
+            "[ORDER %s] FIX price_per_ks: set to %s (from current_rate)",
+            order.id,
+            order.price_per_ks,
+        )
 
-    # ✅ далі використовуємо лише зафіксований
-    price_per_ks = Decimal(str(order.price_per_ks or current_rate))
+    # ✅ далі використовуємо лише зафіксований (ВАЖЛИВО: НЕ через `or`)
+    price_per_ks = Decimal(str(order.price_per_ks)) if order.price_per_ks is not None else current_rate
+
+    logger.warning(
+        "[ORDER %s] price_per_ks_used=%s (order.price_per_ks=%s current_rate=%s)",
+        order.id,
+        price_per_ks,
+        order.price_per_ks,
+        current_rate,
+    )
 
     # ---------------- helpers ----------------
     def _hsl_to_hex(h, s, l):
@@ -280,6 +304,7 @@ def calculate_order(request, order_id):
         val = (val or "").strip().replace(",", ".")
         if val == "":
             return None
+        # ⚠️ якщо хочеш ще безпечніше — додамо try/except
         return Decimal(val)
 
     def _q2(x: Decimal) -> Decimal:
@@ -289,11 +314,14 @@ def calculate_order(request, order_id):
     # POST: assign_customer
     # ============================================================
     if request.method == "POST" and "assign_customer" in request.POST:
+        logger.warning("[ORDER %s] POST assign_customer", order.id)
+
         existing_id = request.POST.get("existing_customer") or ""
         customer = None
 
         if existing_id:
             customer = Customer.objects.filter(id=existing_id).first()
+            logger.warning("[ORDER %s] assign_customer existing_id=%s found=%s", order.id, existing_id, bool(customer))
         else:
             cust_type = request.POST.get("customer_type") or "person"
             name = (request.POST.get("customer_name") or "").strip()
@@ -301,6 +329,11 @@ def calculate_order(request, order_id):
             email = (request.POST.get("customer_email") or "").strip()
             address = (request.POST.get("customer_address") or "").strip()
             company_code = (request.POST.get("customer_company_code") or "").strip()
+
+            logger.warning(
+                "[ORDER %s] assign_customer create type=%s name=%s phone=%s email=%s",
+                order.id, cust_type, name, phone, email
+            )
 
             if name:
                 customer = Customer.objects.create(
@@ -314,21 +347,27 @@ def calculate_order(request, order_id):
 
         if customer:
             order.customer = customer
-            order.save()
+            order.save(update_fields=["customer"])
+            logger.warning("[ORDER %s] assign_customer saved customer_id=%s", order.id, customer.id)
 
         return redirect("calculate_order", order_id=order.id)
 
-    # POST: bulk coefficients (додати коефіцієнти всім / вибірково)
+    # ============================================================
+    # POST: bulk coefficients
     # ============================================================
     if request.method == "POST" and "bulk_coefficients" in request.POST:
-        _debug_post(request, "BULK_COEFFS")
-        coeff_ids = request.POST.getlist("bulk_coeff_ids")  # список коефів
-        scope = request.POST.get("bulk_scope", "all")  # all | selected
-        mode = request.POST.get("bulk_mode", "add")  # add | replace
+        logger.warning("[ORDER %s] POST bulk_coefficients", order.id)
 
-        selected_item_ids = request.POST.getlist("selected_item_ids")  # ids позицій
+        coeff_ids = request.POST.getlist("bulk_coeff_ids")
+        scope = request.POST.get("bulk_scope", "all")
+        mode = request.POST.get("bulk_mode", "add")
+        selected_item_ids = request.POST.getlist("selected_item_ids")
 
-        # Нема чого робити — просто перезавантажимо сторінку
+        logger.warning(
+            "[ORDER %s] bulk coeff_ids=%s scope=%s mode=%s selected_item_ids=%s",
+            order.id, coeff_ids, scope, mode, selected_item_ids
+        )
+
         if not coeff_ids:
             return redirect("calculate_order", order_id=order.id)
 
@@ -338,9 +377,9 @@ def calculate_order(request, order_id):
         if scope == "selected":
             target_qs = target_qs.filter(id__in=selected_item_ids)
 
-        # ✅ режим:
-        # add     -> додає до вже існуючих
-        # replace -> заміняє на вибрані
+        target_ids = list(target_qs.values_list("id", flat=True))
+        logger.warning("[ORDER %s] bulk target_item_ids=%s", order.id, target_ids)
+
         if mode == "replace":
             for it in target_qs:
                 it.coefficients.set(coefs)
@@ -348,24 +387,35 @@ def calculate_order(request, order_id):
             for it in target_qs:
                 it.coefficients.add(*coefs)
 
+        # ⚠️ Важливо: ця функція може перезаписувати totals у Order
+        logger.warning(
+            "[ORDER %s] bulk BEFORE recalc db_total_ks=%s db_total_cost=%s",
+            order.id, getattr(order, "total_ks", None), getattr(order, "total_cost", None)
+        )
         _recalc_order_totals(order)
+        order.refresh_from_db()
+        logger.warning(
+            "[ORDER %s] bulk AFTER recalc db_total_ks=%s db_total_cost=%s",
+            order.id, getattr(order, "total_ks", None), getattr(order, "total_cost", None)
+        )
+
         return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
-    # POST: save_markup (глобальна + по позиціях)
+    # POST: save_markup
     # ============================================================
     if request.method == "POST" and "save_markup" in request.POST:
-        _debug_post(request, "SAVE_MARKUP")
+        logger.warning("[ORDER %s] POST save_markup", order.id)
 
-        # 1) глобальна fallback-націнка
         order_markup = _to_decimal_or_none(request.POST.get("order_markup"))
         if order_markup is None:
             order_markup = Decimal("0")
 
+        logger.warning("[ORDER %s] save_markup order_markup=%s", order.id, order_markup)
+
         order.markup_percent = order_markup
         order.save(update_fields=["markup_percent"])
 
-        # 2) індивідуальні націнки
         for it in order.items.all():
             key = f"item_markup_{it.id}"
             raw = request.POST.get(key)
@@ -378,8 +428,19 @@ def calculate_order(request, order_id):
 
             it.markup_percent = _to_decimal_or_none(raw)
             it.save(update_fields=["markup_percent"])
+            logger.warning("[ORDER %s][ITEM %s] save_markup item_markup=%s", order.id, it.id, it.markup_percent)
 
+        logger.warning(
+            "[ORDER %s] markup BEFORE recalc db_total_ks=%s db_total_cost=%s",
+            order.id, getattr(order, "total_ks", None), getattr(order, "total_cost", None)
+        )
         _recalc_order_totals(order)
+        order.refresh_from_db()
+        logger.warning(
+            "[ORDER %s] markup AFTER recalc db_total_ks=%s db_total_cost=%s",
+            order.id, getattr(order, "total_ks", None), getattr(order, "total_cost", None)
+        )
+
         return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
@@ -387,20 +448,23 @@ def calculate_order(request, order_id):
     # ============================================================
     if request.method == "POST":
         if (
-                "upload_images" not in request.POST
-                and "upload_files" not in request.POST
-                and "update_file" not in request.POST
-                and "delete_file" not in request.POST
-                and "assign_customer" not in request.POST
-                and "save_markup" not in request.POST
-                and "bulk_coefficients" not in request.POST
+            "upload_images" not in request.POST
+            and "upload_files" not in request.POST
+            and "update_file" not in request.POST
+            and "delete_file" not in request.POST
+            and "assign_customer" not in request.POST
+            and "save_markup" not in request.POST
+            and "bulk_coefficients" not in request.POST
         ):
+            logger.warning("[ORDER %s] POST add_item", order.id)
+
             order_name = (request.POST.get("order_name") or "").strip()
             order_name_template_id = request.POST.get("order_name_template") or ""
             fields_to_update = []
 
             if order_name_template_id:
                 tpl = OrderNameDirectory.objects.filter(id=order_name_template_id).first()
+                logger.warning("[ORDER %s] add_item order_name_template_id=%s found=%s", order.id, order_name_template_id, bool(tpl))
                 if tpl:
                     order.order_name_template = tpl
                     fields_to_update.append("order_name_template")
@@ -413,6 +477,7 @@ def calculate_order(request, order_id):
 
             if fields_to_update:
                 order.save(update_fields=fields_to_update)
+                logger.warning("[ORDER %s] add_item saved fields=%s", order.id, fields_to_update)
 
             name = request.POST.get("name") or "Позиція"
             item_qty = max(1, int(request.POST.get("item_qty", 1)))
@@ -421,14 +486,19 @@ def calculate_order(request, order_id):
             selected_adds = request.POST.getlist("additions")
             selected_coefs = request.POST.getlist("coefficients")
 
+            logger.warning(
+                "[ORDER %s] add_item name=%s qty=%s products=%s adds=%s coefs=%s",
+                order.id, name, item_qty, selected_products, selected_adds, selected_coefs
+            )
+
             item = OrderItem.objects.create(order=order, name=name, quantity=item_qty)
+            logger.warning("[ORDER %s] add_item created item_id=%s", order.id, item.id)
 
             if selected_products:
-                if selected_products:
-                    for pid in selected_products:
-                        qty_field = f"prod_qty_{pid}"
-                        prod_qty = max(1, int(request.POST.get(qty_field, 1)))
-                        OrderItemProduct.objects.create(order_item=item, product_id=pid, quantity=prod_qty)
+                for pid in selected_products:
+                    qty_field = f"prod_qty_{pid}"
+                    prod_qty = max(1, int(request.POST.get(qty_field, 1)))
+                    OrderItemProduct.objects.create(order_item=item, product_id=pid, quantity=prod_qty)
 
             if selected_coefs:
                 item.coefficients.set(selected_coefs)
@@ -438,7 +508,17 @@ def calculate_order(request, order_id):
                 qty = max(1, int(request.POST.get(qty_field, 1)))
                 AdditionItem.objects.create(order_item=item, addition_id=add_id, quantity=qty)
 
+            logger.warning(
+                "[ORDER %s] add_item BEFORE recalc db_total_ks=%s db_total_cost=%s",
+                order.id, getattr(order, "total_ks", None), getattr(order, "total_cost", None)
+            )
             _recalc_order_totals(order)
+            order.refresh_from_db()
+            logger.warning(
+                "[ORDER %s] add_item AFTER recalc db_total_ks=%s db_total_cost=%s",
+                order.id, getattr(order, "total_ks", None), getattr(order, "total_cost", None)
+            )
+
             return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
@@ -446,66 +526,78 @@ def calculate_order(request, order_id):
     # ============================================================
     items = (
         order.items.all()
-        .prefetch_related("products", "coefficients", "addition_items__addition")
+        .prefetch_related(
+            "coefficients",
+            "addition_items__addition",
+            "product_items__product",
+        )
     )
 
-    # К/С сумарно та формула по к/с
     effective_ks = Decimal("0.00")
+    total_sum = Decimal("0.00")
     formula_terms = []
 
-    # ✅ фінальна сума (ВЖЕ з націнкою), але без показу “що це націнка”
-    total_sum = Decimal("0.00")
-
     order_markup = Decimal(str(getattr(order, "markup_percent", 0) or 0))
+
+    logger.warning("[ORDER %s] GET items_count=%s order_markup=%s", order.id, items.count(), order_markup)
 
     for it in items:
         it.color_hex = get_item_color(it.id)
 
-        # ---- K/С calc ----
         products_ks = Decimal("0")
         prod_terms = []
 
-        # якщо новий зв'язок: it.product_items (related_name на through)
-        for op in it.product_items.select_related("product").all():
+        # products
+        for op in it.product_items.all():
             p = op.product
             base = Decimal(str(p.base_ks or 0))
             qty_p = int(op.quantity or 1)
-
             products_ks += base * Decimal(qty_p)
             prod_terms.append(f"{base:.2f} × {qty_p}")
-            add_terms = []
+
+        # additions
         adds_ks = Decimal("0")
+        add_terms = []
 
-        for ai in it.addition_items.select_related("addition").all():
+        for ai in it.addition_items.all():
             qty_add = int(getattr(ai, "quantity", 1) or 1)
-
             total_add = Decimal(str(ai.total_ks() or 0))
             adds_ks += total_add
 
-            # базове за 1 шт (для красивої формули)
-            if qty_add > 0:
-                base_add = (total_add / Decimal(qty_add))
-            else:
-                base_add = total_add
-
+            base_add = (total_add / Decimal(qty_add)) if qty_add > 0 else total_add
             base_add = _q2(base_add)
-            total_add_q = _q2(total_add)
-
             add_terms.append(f"{base_add:.2f} × {qty_add}")
+
         qty = Decimal(str(it.quantity or 1))
 
+        # ✅ coefficients: MULTIPLY
         coef = Decimal("1.0")
+        coef_terms = []
+        coef_lines = []
+
         for c in it.coefficients.all():
-            coef += Decimal(str(c.value or 0))
-        # формула доповнень як текст
+            c_val = Decimal(str(c.value or 1))
+            coef *= c_val
+            coef_terms.append(f"{c_val:.2f}")
+            coef_lines.append(f"• {c.name} ×{c_val:.2f}")
+
         products_formula = " + ".join(prod_terms) if prod_terms else "0.00"
         adds_formula = " + ".join(add_terms) if add_terms else "0.00"
 
+        # show coef part only if exists
+        if coef_terms:
+            coef_formula = " × ".join(coef_terms)
+            coef_part = f" × {coef_formula}"
+            coef_display_line = f"Коефіцієнт: {_q2(coef)}"
+        else:
+            coef_part = ""
+            coef_display_line = ""
+
         it.ks_formula = (
             f"(({products_formula}) + ({adds_formula})) "
-            f"× {qty} "
-            f"× {coef:.2f}"
+            f"× {qty}{coef_part}"
         )
+
         ks_base = (products_ks + adds_ks) * qty
         ks_effective = _q2(ks_base * coef)
 
@@ -518,26 +610,37 @@ def calculate_order(request, order_id):
         effective_ks += ks_effective
         formula_terms.append(f"{ks_effective:.2f}")
 
-        # ---- markup effective (але не показуємо користувачу окремо) ----
+        # DEBUG per item
+        logger.warning(
+            "[ORDER %s][ITEM %s] products_ks=%s adds_ks=%s qty=%s coef=%s ks_base=%s ks_effective=%s coef_list=%s",
+            order.id,
+            it.id,
+            it.ks_products,
+            it.ks_adds,
+            it.ks_qty,
+            it.ks_coef,
+            _q2(ks_base),
+            it.ks_effective,
+            [(c.id, c.name, str(c.value)) for c in it.coefficients.all()],
+        )
+
+        # markup
         item_markup = it.markup_percent
         if item_markup is None:
             m = order_markup
         else:
             m = Decimal(str(item_markup))
 
-        # ---- ціна позиції ----
-        # базова ціна = ks_effective * rate
         base_price = _q2(ks_effective * price_per_ks)
         final_price = _q2(base_price * (Decimal("1") + (m / Decimal("100"))))
 
-        # для таблиці/суми — показуємо тільки фінальне
         it.total_cost_value = final_price
         total_sum += final_price
 
-        # ---- tooltip (детально по к/с) ----
+        # tooltip breakdown
         NL = "\n"
         prod_lines = []
-        for op in it.product_items.select_related("product").all():
+        for op in it.product_items.all():
             p = op.product
             base = _q2(Decimal(str(p.base_ks or 0)))
             qty_p = int(op.quantity or 1)
@@ -546,18 +649,19 @@ def calculate_order(request, order_id):
         products_breakdown = NL.join(prod_lines) if prod_lines else "—"
 
         add_lines = []
-        for ai in it.addition_items.select_related("addition").all():
+        for ai in it.addition_items.all():
             a = ai.addition
             v = _q2(Decimal(str(ai.total_ks() or 0)))
             qty_txt = f" ×{ai.quantity}" if getattr(ai, "quantity", None) else ""
             add_lines.append(f"• {a.name}{qty_txt}: {v}")
         addons_breakdown = NL.join(add_lines) if add_lines else "—"
 
-        coef_lines = []
-        for c in it.coefficients.all():
-            cv = _q2(Decimal(str(c.value or 1)))
-            coef_lines.append(f"• {c.name} ×{cv}")
         coefs_breakdown = NL.join(coef_lines) if coef_lines else "—"
+
+        # tooltip: hide coef line if none
+        tail = f"Кількість: {it.ks_qty}"
+        if coef_terms:
+            tail += f"\nКоефіцієнт: {it.ks_coef}"
 
         it.ks_tooltip = (
             f"ПРОДУКТИ:\n{products_breakdown}\n\n"
@@ -565,13 +669,25 @@ def calculate_order(request, order_id):
             f"ДОПОВНЕННЯ:\n{addons_breakdown}\n\n"
             f"СУМА доповнень: {it.ks_adds} к/с\n\n"
             f"КОЕФІЦІЄНТИ:\n{coefs_breakdown}\n\n"
-            f"Кількість: {it.ks_qty}\n"
-            f"Коефіцієнт: {it.ks_coef}"
+            f"{tail}"
         )
 
     effective_ks = _q2(effective_ks)
     total_sum = _q2(total_sum)
     formula_expression = " + ".join(formula_terms) if formula_terms else "0.00"
+
+    logger.warning(
+        "[ORDER %s] PAGE totals: effective_ks=%s total_sum=%s formula_expression=%s",
+        order.id, effective_ks, total_sum, formula_expression
+    )
+    logger.warning(
+        "[ORDER %s] DB snapshot: total_ks=%s total_cost=%s price_per_ks=%s markup=%s",
+        order.id,
+        getattr(order, "total_ks", None),
+        getattr(order, "total_cost", None),
+        order.price_per_ks,
+        getattr(order, "markup_percent", None),
+    )
 
     default_coeffs = Coefficient.objects.filter(applies_globally=True).order_by("name")
     default_addons = Addition.objects.filter(applies_globally=True).order_by("name")
@@ -604,7 +720,7 @@ def calculate_order(request, order_id):
         "addons": default_addons,
         "rate": price_per_ks,
         "items": items,
-        "total": total_sum,  # ✅ фінальна сума "як ніби так і було"
+        "total": total_sum,
         "customers": customers,
         "markers_by_image": markers_by_image,
         "effective_ks": effective_ks,
@@ -1240,7 +1356,6 @@ def generate_pdf(request, order_id):
     # прибрали "Базова вартість: 0.00" => показуємо тільки якщо > 0
     if base_with_markup > 0:
         p.setFont(base_font, 12)
-        p.drawString(40, y_summary, f"Базова вартість: {base_with_markup:.2f} грн")
         y_final = y_summary - 25
     else:
         y_final = y_summary
