@@ -805,12 +805,24 @@
         <!-- ЛІВО: коефіцієнти (широко) -->
         <div class="col-md-9">
           <label class="form-label fw-bold mb-1">Коефіцієнти</label>
-          <select name="bulk_coeff_ids" class="form-select" multiple size="3">
-            {% for c in coefficients %}
-              <option value="{{ c.id }}">{{ c.name }} +{{ c.value }}</option>
-            {% endfor %}
-          </select>
-          <small class="text-muted">Ctrl / Shift — мультивибір</small>
+            <select name="bulk_coeff_ids" class="form-select" multiple size="5">
+              {% if global_coeffs %}
+                <optgroup label="Глобальні коефіцієнти">
+                  {% for c in global_coeffs %}
+                    <option value="{{ c.id }}">{{ c.name }} +{{ c.value }}</option>
+                  {% endfor %}
+                </optgroup>
+              {% endif %}
+
+              {% if category_coeffs %}
+                <optgroup label="Категорійні / специфічні коефіцієнти">
+                  {% for c in category_coeffs %}
+                    <option value="{{ c.id }}">{{ c.name }} +{{ c.value }}</option>
+                  {% endfor %}
+                </optgroup>
+              {% endif %}
+            </select>
+            <small class="text-muted">Ctrl / Shift — мультивибір</small>
         </div>
 
         <!-- ПРАВО: керування (в колонку) -->

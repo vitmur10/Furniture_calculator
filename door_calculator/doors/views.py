@@ -538,7 +538,8 @@ def calculate_order(request, order_id):
     total_sum = _q2(total_sum)
     formula_expression = " + ".join(formula_terms) if formula_terms else "0.00"
 
-    default_coeffs = Coefficient.objects.filter(applies_globally=True).order_by("name")
+    global_coeffs = Coefficient.objects.filter(applies_globally=True).order_by("name")
+    category_coeffs = Coefficient.objects.filter(applies_globally=False).order_by("name")
     default_addons = Addition.objects.filter(applies_globally=True).order_by("name")
     customers = Customer.objects.all().order_by("-created_at")
 
@@ -561,7 +562,8 @@ def calculate_order(request, order_id):
         "order": order,
         "categories": categories,
         "products": products,
-        "coefficients": default_coeffs,
+        "global_coeffs": global_coeffs,
+        "category_coeffs": category_coeffs,
         "addons": default_addons,
         "rate": price_per_ks,
         "items": items,
