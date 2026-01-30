@@ -7,9 +7,9 @@
       border-bottom: 1px dashed #0d6efd;
     }
     .custom-col {
-  flex: 0 0 20.833%; /* 2.5 / 12 ≈ 0.2083 → 20.83% ширини */
-  max-width: 20.833%;
-}
+      flex: 0 0 20.833%;
+      max-width: 20.833%;
+    }
     #sketch-section{
       flex: 0 0 420px;   /* ширина колонки */
       width: 420px;
@@ -730,12 +730,12 @@
 
             <!-- ✅ к-сть виробів -->
             <input type="number"
-                   min="1"
+                   min="0.01"
+                   step="any"
                    value="1"
                    class="form-control form-control-sm prod-qty"
                    style="width: 90px;"
-                   name="prod_qty_{{ p.id }}"
-                   disabled>
+                   name="prod_qty_{{ p.id }}">
           </div>
         {% endfor %}
       </div>

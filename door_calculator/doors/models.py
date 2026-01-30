@@ -300,7 +300,7 @@ class Order(models.Model):
 class OrderItemProduct(models.Model):
     order_item = models.ForeignKey("OrderItem", on_delete=models.CASCADE, related_name="product_items")
     product = models.ForeignKey("Product", on_delete=models.CASCADE)
-    quantity = models.PositiveIntegerField(default=1)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
 
     class Meta:
         unique_together = ("order_item", "product")
@@ -330,7 +330,7 @@ class OrderItem(models.Model):
         related_name="order_items_v2",
     )
     coefficients = models.ManyToManyField(Coefficient, blank=True)
-    quantity = models.PositiveIntegerField(default=1)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
 
     status = models.CharField(
         max_length=20,
@@ -539,7 +539,7 @@ class OrderProgress(models.Model):
 class AdditionItem(models.Model):
     order_item = models.ForeignKey(OrderItem, on_delete=models.CASCADE, related_name="addition_items")
     addition = models.ForeignKey(Addition, on_delete=models.CASCADE)
-    quantity = models.PositiveIntegerField(default=1)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
 
     def total_ks(self):
         return self.addition.ks_value * self.quantity
