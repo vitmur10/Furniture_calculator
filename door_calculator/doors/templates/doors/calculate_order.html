@@ -6,6 +6,10 @@
       cursor: help;
       border-bottom: 1px dashed #0d6efd;
     }
+    .custom-col {
+  flex: 0 0 20.833%; /* 2.5 / 12 ≈ 0.2083 → 20.83% ширини */
+  max-width: 20.833%;
+}
     #sketch-section{
       flex: 0 0 420px;   /* ширина колонки */
       width: 420px;
@@ -773,7 +777,7 @@
 <div class="row g-2 mb-2">
 
   <!-- Націнка -->
-  <div class="col-md-4">
+  <div class="col-md-2 custom-col"> <!-- Було col-md-4 -->
     <form id="saveMarkupForm" method="post" class="card p-2 h-100">
       {% csrf_token %}
       <input type="hidden" name="save_markup" value="1">
@@ -790,53 +794,50 @@
       <small class="text-muted">Fallback для порожніх конструкцій</small>
     </form>
   </div>
-      <!-- Коефіцієнти -->
-  <div class="col-md-8">
+
+  <!-- Коефіцієнти -->
+  <div class="col-md-9"> <!-- Було col-md-8 -->
     <form id="bulkCoeffsForm" method="post" class="card p-2 mb-2">
-  {% csrf_token %}
-  <input type="hidden" name="bulk_coefficients" value="1">
+      {% csrf_token %}
+      <input type="hidden" name="bulk_coefficients" value="1">
 
-  <div class="row g-2 align-items-stretch">
+      <div class="row g-2 align-items-stretch">
+        <!-- ЛІВО: коефіцієнти (широко) -->
+        <div class="col-md-9">
+          <label class="form-label fw-bold mb-1">Коефіцієнти</label>
+          <select name="bulk_coeff_ids" class="form-select" multiple size="3">
+            {% for c in coefficients %}
+              <option value="{{ c.id }}">{{ c.name }} +{{ c.value }}</option>
+            {% endfor %}
+          </select>
+          <small class="text-muted">Ctrl / Shift — мультивибір</small>
+        </div>
 
-    <!-- ЛІВО: коефіцієнти (широко) -->
-    <div class="col-md-9">
-      <label class="form-label fw-bold mb-1">Коефіцієнти</label>
-      <select name="bulk_coeff_ids" class="form-select" multiple size="3">
-        {% for c in coefficients %}
-          <option value="{{ c.id }}">{{ c.name }} +{{ c.value }}</option>
-        {% endfor %}
-      </select>
-      <small class="text-muted">Ctrl / Shift — мультивибір</small>
-    </div>
+        <!-- ПРАВО: керування (в колонку) -->
+        <div class="col-md-3 d-flex flex-column gap-2">
+          <div>
+            <label class="form-label fw-bold mb-1">Застосувати</label>
+            <select name="bulk_scope" class="form-select">
+              <option value="all">Всім конструкціям</option>
+              <option value="selected">Лише вибраним</option>
+            </select>
+          </div>
 
-    <!-- ПРАВО: керування (в колонку) -->
-    <div class="col-md-3 d-flex flex-column gap-2">
+          <div>
+            <label class="form-label fw-bold mb-1">Режим</label>
+            <select name="bulk_mode" class="form-select">
+              <option value="add">Додати</option>
+            </select>
+          </div>
 
-      <div>
-        <label class="form-label fw-bold mb-1">Застосувати</label>
-        <select name="bulk_scope" class="form-select">
-          <option value="all">Всім конструкціям</option>
-          <option value="selected">Лише вибраним</option>
-        </select>
+          <button type="submit" class="btn btn-success w-100 mt-auto">
+            ✓ Застосувати
+          </button>
+        </div>
       </div>
-
-      <div>
-        <label class="form-label fw-bold mb-1">Режим</label>
-        <select name="bulk_mode" class="form-select">
-          <option value="add">Додати</option>
-        </select>
-      </div>
-
-      <button type="submit" class="btn btn-success w-100 mt-auto">
-        ✓ Застосувати
-      </button>
-
-    </div>
+    </form>
   </div>
-</form>
-  </div>
-</div>
-    {% if items %}
+</div>    {% if items %}
       <div class="summary-table">
         <table class="table table-bordered text-center align-middle mb-0">
             <thead>

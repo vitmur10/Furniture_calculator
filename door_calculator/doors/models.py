@@ -57,7 +57,7 @@ class Product(models.Model):
         ordering = ["category", "name"]
 
     def __str__(self):
-        return self.category.name if self.category else "Без категорії"
+        return self.name
 
 
 class Addition(models.Model):
@@ -83,6 +83,9 @@ class Addition(models.Model):
         verbose_name="Вироби",
         help_text="Доступне для конкретних виробів."
     )
+
+    def __str__(self):
+        return f"{self.name}={self.ks_value}"
 
     class Meta:
         verbose_name = "Доповнення"
@@ -111,6 +114,9 @@ class Coefficient(models.Model):
         verbose_name="Вироби"
     )
 
+    def __str__(self):
+        return f"{self.name}={self.value}"
+
     class Meta:
         verbose_name = "Коефіцієнт"
         verbose_name_plural = "Коефіцієнти"
@@ -125,6 +131,8 @@ class Rate(models.Model):
     )
     updated_at = models.DateTimeField("Оновлено", auto_now=True)
 
+    def __str__(self):
+        return f"{self.price_per_ks}"
     class Meta:
         verbose_name = "Тариф"
         verbose_name_plural = "Тарифи"
@@ -210,7 +218,6 @@ class Customer(models.Model):
 
 
 class Order(models.Model):
-
     STATUS_CHOICES = [
         ("in_progress", "В роботі"),
         ("completed", "Завершено"),
@@ -282,7 +289,7 @@ class Order(models.Model):
     remote_web_url = models.URLField(blank=True, null=True)
 
     def __str__(self):
-        return f"Замовлення №{self.order_number}"
+        return f"Замовлення №{self.order_number}, назва замовлення{self.order_name}"
 
     class Meta:
         verbose_name = "Замовлення"
@@ -394,13 +401,13 @@ class OrderItem(models.Model):
 
         return base_price * (Decimal("1") + (Decimal(str(markup)) / Decimal("100")))
 
-
     def __str__(self):
         return self.name or f"Позиція {self.id}"
 
     class Meta:
         verbose_name = "Позиція замовлення"
         verbose_name_plural = "Позиції замовлення"
+
 
 class OrderImage(models.Model):
     """Фото замовлення з Microsoft 365 (Teams/SharePoint)"""
@@ -519,6 +526,7 @@ class OrderProgress(models.Model):
         related_name="problem_progresses",
         verbose_name="Позиції, які неможливо виконати",
     )
+
     class Meta:
         verbose_name = "Прогрес замовлення"
         verbose_name_plural = "Прогрес замовлень"

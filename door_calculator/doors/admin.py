@@ -6,7 +6,6 @@ admin.site.register(Product)
 admin.site.register(Addition)
 admin.site.register(Coefficient)
 admin.site.register(Rate)
-admin.site.register(Order)
 admin.site.register(OrderItem)
 admin.site.register(AdditionItem)
 admin.site.register(Worker)
@@ -14,6 +13,14 @@ admin.site.register(WorkLog)
 admin.site.register(OrderProgress)
 admin.site.register(Category)
 
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    # Отримуємо всі поля моделі динамічно
+    list_display = [field.name for field in Order._meta.get_fields() if field.concrete and not field.many_to_many]
+
+    # Робимо created_at і всі інші автоматичні поля тільки для читання
+    readonly_fields = [field.name for field in Order._meta.get_fields() if field.concrete]
 
 @admin.register(CompanyInfo)
 class CompanyInfoAdmin(admin.ModelAdmin):
