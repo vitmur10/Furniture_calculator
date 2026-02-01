@@ -542,14 +542,16 @@ class AdditionItem(models.Model):
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
 
     def total_ks(self):
-        return self.addition.ks_value * self.quantity
+        ks_value = Decimal(str(getattr(self.addition, "ks_value", 0) or 0))
+        qty = Decimal(str(self.quantity or 0))
+        return ks_value * qty
 
     def __str__(self):
         return f"{self.addition.name} ×{self.quantity}"
 
     class Meta:
         verbose_name = "Доповнення в позиції"
-        verbose_name_plural = "Доповнення в позиціях"
+        verbose_name_plural = "Доповнення в позиції"х"
 
 
 class Worker(models.Model):
