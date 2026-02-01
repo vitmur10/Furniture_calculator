@@ -372,7 +372,7 @@ class OrderItem(models.Model):
         products_ks = Decimal("0")
         for op in self.product_items.select_related("product").all():
             base = Decimal(str(op.product.base_ks or 0))
-            qty = int(op.quantity or 1)
+            qty = Decimal(str(op.quantity or 1))
             products_ks += base * Decimal(qty)
 
         adds_ks = Decimal("0")

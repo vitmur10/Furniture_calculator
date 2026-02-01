@@ -728,53 +728,58 @@ def _q2(x: Decimal) -> Decimal:
 
 def build_item_formula_parts(it):
     """
-    Повертає деталізацію як у формулі:
+    Деталізація для internal PDF:
       products_sum, products_terms
       adds_sum, adds_terms
       qty
       coef
       ks_effective
-      ks_formula (рядок)
+      ks_formula
     """
+    def _q2(x: Decimal) -> Decimal:
+        return Decimal(x).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
     products_sum = Decimal("0")
     prod_terms = []
 
     for op in it.product_items.select_related("product").all():
         p = op.product
         base = Decimal(str(p.base_ks or 0))
-        qty_p = int(op.quantity or 1)
-        products_sum += base * Decimal(qty_p)
+        qty_p = Decimal(str(op.quantity or 1))
+        products_sum += base * qty_p
         prod_terms.append(f"{base:.2f}×{qty_p}")
 
     adds_sum = Decimal("0")
     add_terms = []
 
     for ai in it.addition_items.select_related("addition").all():
-        qty_add = int(getattr(ai, "quantity", 1) or 1)
+        qty_add = Decimal(str(getattr(ai, "quantity", 1) or 1))
         total_add = Decimal(str(ai.total_ks() or 0))
         adds_sum += total_add
-        base_add = (total_add / Decimal(qty_add)) if qty_add > 0 else total_add
+
+        base_add = (total_add / qty_add) if qty_add > 0 else total_add
         base_add = _q2(base_add)
         add_terms.append(f"{base_add:.2f}×{qty_add}")
 
     qty = Decimal(str(it.quantity or 1))
 
-    coef = sum(
-        (Decimal(str(c.value or 0)) for c in it.coefficients.all()),
-        Decimal("0.0")
-    )
+    # ✅ правильний коеф: множення, базове значення 1.0
+    coef = Decimal("1.0")
+    coef_terms = []
+    for c in it.coefficients.all():
+        c_val = Decimal(str(c.value or 1))
+        coef *= c_val
+        coef_terms.append(f"{c_val:.2f}")
 
     products_formula = " + ".join(prod_terms) if prod_terms else "0.00"
     adds_formula = " + ".join(add_terms) if add_terms else "0.00"
 
     ks_base = (products_sum + adds_sum) * qty
-
-    # coef тільки як множник, БЕЗ 1+
     ks_effective = _q2(ks_base * coef)
 
-    ks_formula = f"(({products_formula}) + ({adds_formula})) × {qty}"
-
-    coef_ui = _q2(coef) if coef != 0 else Decimal("0.00")
+    # ✅ Формула: коеф показуємо тільки якщо він реально є (тобто були вибрані коефи)
+    coef_part = f" × {' × '.join(coef_terms)}" if coef_terms else ""
+    ks_formula = f"(({products_formula}) + ({adds_formula})) × {qty}{coef_part}"
 
     return {
         "products_sum": _q2(products_sum),
@@ -782,9 +787,9 @@ def build_item_formula_parts(it):
         "adds_sum": _q2(adds_sum),
         "adds_terms": adds_formula,
         "qty": qty,
-        "coef": coef_ui,  # ✅ 0.00 або сума коефіцієнтів
+        "coef": _q2(coef),
         "ks_effective": ks_effective,
-        "ks_formula": ks_formula,  # ✅ без коеф частини
+        "ks_formula": ks_formula,
     }
 
 
@@ -798,7 +803,7 @@ def generate_pdf(request, order_id):
       - внутрішній (?internal=1) — внутрішній розрахунок (копія таблиці + формула)
 
     Параметри GET:
-      ?markup=10     — націнка, % (застосовується до позицій)
+      ?markup=10     — націнка, % (override для PDF; якщо не задано — береться з order/item)
       ?delivery=300  — доставка, грн
       ?packing=200   — пакування, грн
       ?simple=1      — спрощений варіант
@@ -806,7 +811,11 @@ def generate_pdf(request, order_id):
       ?download=1    — скачати файл (для internal ігнорується)
     """
     order = Order.objects.get(id=order_id)
-    items = OrderItem.objects.filter(order=order)
+    items = OrderItem.objects.filter(order=order).prefetch_related(
+        "coefficients",
+        "addition_items__addition",
+        "product_items__product",
+    )
     company = CompanyInfo.objects.first()
 
     # ---------- helpers ----------
@@ -825,13 +834,22 @@ def generate_pdf(request, order_id):
     def safe_text(x: str) -> str:
         return strip_tags(str(x or "")).replace("\n", " ").strip()
 
+    def fmt_qty(q: Decimal) -> str:
+        """Гарне відображення кількості: 2.00 -> 2, 1.50 -> 1.5"""
+        q = to_decimal(q, "0")
+        if q == q.to_integral_value():
+            return str(int(q))
+        # прибрати зайві нулі справа
+        s = format(q.normalize(), "f")
+        return s.rstrip("0").rstrip(".") if "." in s else s
+
     def extract_ks_from_obj(obj):
         """
         Повертає КС з об'єкта, якщо є (Order/OrderItem), або 0.
         """
         for attr in (
-                "total_ks", "total_ks_cached", "ks_total", "total_ks_value",
-                "ks_effective", "effective_ks", "ks_value", "ks"
+            "total_ks", "total_ks_cached", "ks_total", "total_ks_value",
+            "ks_effective", "effective_ks", "ks_value", "ks"
         ):
             if hasattr(obj, attr):
                 val = getattr(obj, attr)
@@ -843,55 +861,60 @@ def generate_pdf(request, order_id):
     def calc_production_days_from_ks(total_ks: Decimal):
         """
         0.75 кс/год * 2 працівники * 8 год/день => 12 кс/день
-        Логіка як у тебе: через години +30% запас.
+        +30% запас. Округлення до цілого дня.
         """
         if total_ks is None or total_ks <= 0:
             return None
 
-        # 0.75 кс = 1 година роботи 1 працівника
         hours_total = (total_ks / Decimal("0.75"))
-
-        # 2 працівники по 8 годин = 16 год/день
         hours_per_day_all_workers = Decimal("2") * Decimal("8")
-
         days_raw = hours_total / hours_per_day_all_workers
-        days_with_margin = days_raw * Decimal("1.3")  # +30%
+        days_with_margin = days_raw * Decimal("1.3")
 
         days_int = int(days_with_margin.to_integral_value(rounding=ROUND_HALF_UP))
         return max(days_int, 1)
 
     # ---------- GET params ----------
-    markup_percent = to_decimal(request.GET.get("markup"), "0")
+    markup_percent_get = request.GET.get("markup")
+    markup_override = None
+    if markup_percent_get not in (None, ""):
+        markup_override = to_decimal(markup_percent_get, "0")
+
     delivery = to_decimal(request.GET.get("delivery"), "0")
     packing = to_decimal(request.GET.get("packing"), "0")
     simple_mode = request.GET.get("simple") == "1"
     internal_mode = request.GET.get("internal") == "1"
 
-    # множник для націнки
-    if markup_percent > 0:
-        markup_factor = (Decimal("100") + markup_percent) / Decimal("100")
-    else:
-        markup_factor = Decimal("1.0")
+    # ---------- підрахунок кількості конструкцій ----------
+    # "конструкції" = сума quantity по позиціях (не кількість позицій)
+    constructions_total = Decimal("0")
+    positions_count = items.count()
+    for it in items:
+        constructions_total += to_decimal(getattr(it, "quantity", 1) or 1, "1")
 
-    # ---------- базова сума (без націнки) ----------
+    # ---------- базова сума (без націнки з GET) ----------
+    # Тут залишаємо твою логіку: беремо it.total_cost (як було),
+    # а потім застосовуємо markup_override (якщо передали) до всієї бази.
     base_without_markup = Decimal("0")
-    item_costs = []
+    item_costs = []  # (it, raw_dec)
 
     for it in items:
-        raw = it.total_cost() if callable(it.total_cost) else it.total_cost
+        raw = it.total_cost() if callable(getattr(it, "total_cost", None)) else getattr(it, "total_cost", 0)
         raw_dec = to_decimal(raw, "0")
         item_costs.append((it, raw_dec))
         base_without_markup += raw_dec
 
-    base_with_markup = (base_without_markup * markup_factor).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-    final_total = (base_with_markup + delivery + packing).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
+    # Націнка для детального/спрощеного: якщо ?markup= передали — застосувати її,
+    # якщо ні — множник 1.0 (бо base_without_markup вже може містити markup з order/item).
+    if markup_override is not None and markup_override > 0:
+        markup_factor = (Decimal("100") + markup_override) / Decimal("100")
+    else:
+        markup_factor = Decimal("1.0")
+
+    base_with_markup = (base_without_markup * markup_factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    final_total = (base_with_markup + delivery + packing).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     # ---------- розрахунок орієнтовного терміну виготовлення ----------
-    # 1) пробуємо з order / item атрибутів
     total_ks = extract_ks_from_obj(order)
 
     if total_ks <= 0:
@@ -900,22 +923,18 @@ def generate_pdf(request, order_id):
             total_ks_sum += extract_ks_from_obj(it)
         total_ks = total_ks_sum
 
-    # 2) якщо досі 0 — рахуємо через build_item_formula_parts (як у internal)
+    # fallback (як у internal)
     if total_ks <= 0:
         ks_eff_sum = Decimal("0")
         for it in items:
             try:
-                parts = build_item_formula_parts(it)  # <-- ключовий fallback
+                parts = build_item_formula_parts(it)
                 ks_eff_sum += to_decimal(parts.get("ks_effective", 0), "0")
             except Exception:
                 pass
         total_ks = ks_eff_sum
 
-    production_days = calc_production_days_from_ks(total_ks)
-
-    # 3) щоб НЕ було порожньо — ставимо 1 день, якщо нічого не порахувалось
-    if production_days is None:
-        production_days = 1
+    production_days = calc_production_days_from_ks(total_ks) or 1
 
     # ---------- старт PDF ----------
     buffer = BytesIO()
@@ -931,7 +950,7 @@ def generate_pdf(request, order_id):
         base_font = "Helvetica"
 
     # ---------- шапка ----------
-    if company and company.logo:
+    if company and getattr(company, "logo", None):
         try:
             logo = ImageReader(company.logo.path)
             p.drawImage(logo, 40, height - 140, width=160, preserveAspectRatio=True, mask="auto")
@@ -941,18 +960,18 @@ def generate_pdf(request, order_id):
     x_right = width - 40
     p.setFont(base_font, 12)
     if company:
-        p.drawRightString(x_right, height - 60, company.name)
+        p.drawRightString(x_right, height - 60, safe_text(getattr(company, "name", "")))
         p.setFont(base_font, 10)
-        if company.address:
-            p.drawRightString(x_right, height - 80, company.address)
-        if company.phone:
-            p.drawRightString(x_right, height - 100, f"Тел.: {company.phone}")
-        if company.email:
-            p.drawRightString(x_right, height - 120, f"Email: {company.email}")
-        if company.edrpou:
-            p.drawRightString(x_right, height - 140, f"ЄДРПОУ: {company.edrpou}")
-        if company.iban:
-            p.drawRightString(x_right, height - 160, f"IBAN: {company.iban}")
+        if getattr(company, "address", None):
+            p.drawRightString(x_right, height - 80, safe_text(company.address))
+        if getattr(company, "phone", None):
+            p.drawRightString(x_right, height - 100, f"Тел.: {safe_text(company.phone)}")
+        if getattr(company, "email", None):
+            p.drawRightString(x_right, height - 120, f"Email: {safe_text(company.email)}")
+        if getattr(company, "edrpou", None):
+            p.drawRightString(x_right, height - 140, f"ЄДРПОУ: {safe_text(company.edrpou)}")
+        if getattr(company, "iban", None):
+            p.drawRightString(x_right, height - 160, f"IBAN: {safe_text(company.iban)}")
 
     # ---------- заголовок ----------
     title_y = height - 155
@@ -970,26 +989,31 @@ def generate_pdf(request, order_id):
     p.drawString(40, title_y - 20, f"Замовлення №: {order_number}")
     p.drawString(40, title_y - 38, f"Дата: {created_at.strftime('%d.%m.%Y') if created_at else ''}")
 
-    # Замовник (і для шапки, і для назви файлу)
+    # Замовник
     customer_name = ""
     if hasattr(order, "customer") and order.customer:
-        if hasattr(order.customer, "name") and order.customer.name:
-            customer_name = order.customer.name
-        else:
-            customer_name = str(order.customer)
+        customer_name = safe_text(getattr(order.customer, "name", "")) or safe_text(str(order.customer))
         p.drawString(40, title_y - 56, f"Замовник: {customer_name}")
     else:
         p.drawString(40, title_y - 56, "Замовник: ____________________")
 
-    current_y = title_y - 85
+    # Кількість конструкцій (НОВЕ) + кількість позицій (можеш залишити або прибрати)
+    p.drawString(40, title_y - 74, f"Кількість конструкцій у замовленні: {fmt_qty(constructions_total)}")
+    p.setFont(base_font, 10)
+    p.drawString(40, title_y - 90, f"Кількість позицій у замовленні: {positions_count}")
+
+    current_y = title_y - 115
 
     # =====================================================================
-    # ======================== INTERNAL MODE (3-й файл) ====================
+    # ======================== INTERNAL MODE ==============================
     # =====================================================================
     if internal_mode:
         internal_items = (
-            order.items.all()
-            .prefetch_related("products", "coefficients", "addition_items__addition", "product_items__product")
+            order.items.all().prefetch_related(
+                "coefficients",
+                "addition_items__addition",
+                "product_items__product",
+            )
             if hasattr(order, "items")
             else items
         )
@@ -997,7 +1021,6 @@ def generate_pdf(request, order_id):
         rate_obj = Rate.objects.first()
         current_rate = Decimal(str(rate_obj.price_per_ks)) if rate_obj else Decimal("0")
 
-        # якщо не зафіксовано — фіксуємо (щоб internal теж “заморожував” тариф)
         if order.price_per_ks is None:
             order.price_per_ks = current_rate
             order.save(update_fields=["price_per_ks"])
@@ -1008,38 +1031,43 @@ def generate_pdf(request, order_id):
 
         effective_ks_sum = Decimal("0")
         total_sum = Decimal("0")
+
         order_markup = Decimal(str(getattr(order, "markup_percent", 0) or 0))
 
         idx = 1
         for it in internal_items:
             parts = build_item_formula_parts(it)
 
+            # ✅ Націнка в internal:
+            # якщо ?markup= передали — використовуємо її,
+            # інакше як було: item.markup_percent або order.markup_percent
             item_markup = getattr(it, "markup_percent", None)
-            m = order_markup if item_markup is None else Decimal(str(item_markup))
+            default_m = order_markup if item_markup is None else Decimal(str(item_markup))
+            m = markup_override if markup_override is not None else default_m
 
-            base_price = _q2(parts["ks_effective"] * rate)
+            ks_eff = to_decimal(parts.get("ks_effective", 0), "0")
+            base_price = _q2(ks_eff * rate)
             final_price = _q2(base_price * (Decimal("1") + (m / Decimal("100"))))
 
-            effective_ks_sum += to_decimal(parts["ks_effective"], "0")
+            effective_ks_sum += ks_eff
             total_sum += final_price
 
-            name = it.name or ""
-            qty = getattr(it, "quantity", 1) or 1
-            if qty > 1:
-                name = f"{name} × {qty}"
+            name = safe_text(getattr(it, "name", ""))
+            qty_item = to_decimal(getattr(it, "quantity", 1) or 1, "1")
+            if qty_item != qty_item.to_integral_value() or qty_item > 1:
+                name = f"{name} × {fmt_qty(qty_item)}"
 
             data.append([
                 str(idx),
-                safe_text(name)[:45],
-                str(parts.get("qty", qty)),
+                name[:45],
+                fmt_qty(to_decimal(parts.get("qty", qty_item), "1")),
                 safe_text(parts.get("ks_formula", ""))[:60],
-                f"{to_decimal(parts.get('ks_effective', 0), '0'):.2f}",
+                f"{ks_eff:.2f}",
                 f"{final_price:.2f}",
             ])
             idx += 1
 
-        # 6 колонок => 6 ширин + повітря від країв
-        col_widths = [25, 165, 45, 165, 45, 70]  # 515
+        col_widths = [25, 165, 45, 165, 45, 70]
         tbl = Table(data, colWidths=col_widths)
         tbl.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
@@ -1068,13 +1096,13 @@ def generate_pdf(request, order_id):
         effective_ks_sum_q = _q2(effective_ks_sum)
         total_sum_q = _q2(total_sum)
 
-        # термін у internal — з effective_ks_sum
         production_days_internal = calc_production_days_from_ks(effective_ks_sum) or 1
 
-        if current_y < 140:
+        if current_y < 160:
             p.showPage()
             current_y = height - 80
 
+        # ✅ Формула і підсумки internal + доставка/пакування окремо
         p.setFont(base_font, 12)
         p.drawString(40, current_y, "Формула розрахунку")
         current_y -= 14
@@ -1089,7 +1117,22 @@ def generate_pdf(request, order_id):
 
         p.setFont(base_font, 12)
         p.drawString(40, current_y, f"= {total_sum_q:.2f} грн")
-        current_y -= 26
+        current_y -= 18
+
+        # Додаткові послуги (в internal теж показуємо)
+        extras_total = _q2(delivery + packing)
+        if extras_total > 0:
+            p.setFont(base_font, 10)
+            if delivery > 0:
+                p.drawString(40, current_y, f"+ Доставка: {_q2(delivery):.2f} грн")
+                current_y -= 14
+            if packing > 0:
+                p.drawString(40, current_y, f"+ Пакування: {_q2(packing):.2f} грн")
+                current_y -= 14
+
+            p.setFont(base_font, 12)
+            p.drawString(40, current_y, f"Разом: {_q2(total_sum_q + extras_total):.2f} грн")
+            current_y -= 18
 
         # умови / термін
         text = p.beginText()
@@ -1118,37 +1161,23 @@ def generate_pdf(request, order_id):
         return resp
 
     # =====================================================================
-    # ======================== SIMPLE/DETAILED (твоя логіка) ===============
+    # ======================== SIMPLE/DETAILED =============================
     # =====================================================================
-
-    # Кількість позицій — тільки у спрощеній версії
-    positions_count = items.count()
-    header_bottom_offset = 80
-    if simple_mode:
-        p.drawString(40, title_y - 74, f"Кількість позицій у замовленні: {positions_count}")
-        header_bottom_offset = 100
-
-    current_y = title_y - header_bottom_offset
 
     # ---------- ОСНОВНА ТАБЛИЦЯ (лише для детального) ----------
     if not simple_mode and item_costs:
         main_data = [["№", "Позиція", "Кількість", "Вартість за одиницю, грн", "Сума, грн"]]
 
         for idx, (it, raw_dec) in enumerate(item_costs, start=1):
-            total_with_markup = (raw_dec * markup_factor).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            qty = getattr(it, "quantity", 1) or 1
-            qty_dec = Decimal(str(qty))
+            total_with_markup = (raw_dec * markup_factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            qty = to_decimal(getattr(it, "quantity", 1) or 1, "1")
             unit_cost = (
-                (total_with_markup / qty_dec).quantize(
-                    Decimal("0.01"), rounding=ROUND_HALF_UP
-                )
-                if qty_dec > 0
+                (total_with_markup / qty).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                if qty > 0
                 else Decimal("0.00")
             )
 
-            main_data.append([idx, it.name, str(qty), f"{unit_cost:.2f}", f"{total_with_markup:.2f}"])
+            main_data.append([idx, safe_text(getattr(it, "name", "")), fmt_qty(qty), f"{unit_cost:.2f}", f"{total_with_markup:.2f}"])
 
         main_table = Table(main_data, colWidths=[30, 230, 70, 130, 80])
         main_table.setStyle(TableStyle([
@@ -1177,7 +1206,7 @@ def generate_pdf(request, order_id):
     if extras_rows:
         extras_data = [["№", "Додаткові послуги", "Кількість", "Вартість за одиницю, грн", "Сума, грн"]]
         for idx, (name, value) in enumerate(extras_rows, start=1):
-            val_str = f"{value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):.2f}"
+            val_str = f"{_q2(value):.2f}"
             extras_data.append([idx, name, "1", val_str, val_str])
 
         extras_table = Table(extras_data, colWidths=[30, 230, 70, 130, 80])
@@ -1198,14 +1227,7 @@ def generate_pdf(request, order_id):
         current_y = extras_y - 30
 
     # ---------- ПІДСУМКИ ----------
-    y_summary = current_y
-
-    # прибрали "Базова вартість: 0.00" => показуємо тільки якщо > 0
-    if base_with_markup > 0:
-        p.setFont(base_font, 12)
-        y_final = y_summary - 25
-    else:
-        y_final = y_summary
+    y_final = current_y - 10
 
     p.setFont(base_font, 14)
     p.drawString(40, y_final, f"Фінальна сума до оплати: {final_total:.2f} грн")
