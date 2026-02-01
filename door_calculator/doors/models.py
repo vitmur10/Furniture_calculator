@@ -551,7 +551,7 @@ class AdditionItem(models.Model):
 
     class Meta:
         verbose_name = "Доповнення в позиції"
-        verbose_name_plural = "Доповнення в позиції"х"
+        verbose_name_plural = "Доповнення в позиції"
 
 
 class Worker(models.Model):
