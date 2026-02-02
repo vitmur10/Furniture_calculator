@@ -28,6 +28,7 @@ from .models import (
     Order, OrderItem, AdditionItem, WorkLog, Worker,
     OrderProgress, OrderImage, CompanyInfo, OrderFile, Customer, OrderImageMarker, OrderNameDirectory, OrderItemProduct
 )
+from reportlab.platypus import Paragraph
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.enums import TA_LEFT
 import requests
@@ -35,6 +36,7 @@ from django.urls import reverse
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.utils.html import strip_tags
 import logging
+from math import ceil
 from decimal import Decimal, ROUND_HALF_UP
 from django.shortcuts import get_object_or_404, redirect, render
 logger = logging.getLogger(__name__)
@@ -1008,6 +1010,8 @@ def generate_pdf(request, order_id):
     # =====================================================================
     # ======================== INTERNAL MODE ==============================
     # =====================================================================
+
+
     if internal_mode:
         internal_items = (
             order.items.all().prefetch_related(
@@ -1030,7 +1034,7 @@ def generate_pdf(request, order_id):
 
         data = [["№", "Позиція", "Qty", "Формула", "К/С", "Ціна, грн"]]
 
-        # ✅ Стиль для переносу формули в клітинці
+        # ✅ Стиль для переносу формули
         styles = getSampleStyleSheet()
         formula_style = ParagraphStyle(
             name="FormulaStyle",
@@ -1039,7 +1043,7 @@ def generate_pdf(request, order_id):
             fontSize=8,
             leading=10,
             alignment=TA_LEFT,
-            wordWrap="CJK",  # краще переносить довгі "безпробільні" формули
+            wordWrap="CJK",  # важливо для довгих формул
         )
 
         effective_ks_sum = Decimal("0")
@@ -1051,9 +1055,6 @@ def generate_pdf(request, order_id):
         for it in internal_items:
             parts = build_item_formula_parts(it)
 
-            # ✅ Націнка в internal:
-            # якщо ?markup= передали — використовуємо її,
-            # інакше як було: item.markup_percent або order.markup_percent
             item_markup = getattr(it, "markup_percent", None)
             default_m = order_markup if item_markup is None else Decimal(str(item_markup))
             m = markup_override if markup_override is not None else default_m
@@ -1070,22 +1071,21 @@ def generate_pdf(request, order_id):
             if qty_item != qty_item.to_integral_value() or qty_item > 1:
                 name = f"{name} × {fmt_qty(qty_item)}"
 
-            # ✅ Формула з переносами:
+            # ✅ Формула з переносами: додаємо невидимі точки переносу
             formula = safe_text(parts.get("ks_formula", ""))
-
-            # (опціонально) додатково допомагає переносам у "суцільних" формулах:
-            # formula = (
-            #     formula.replace("*", "*\u200b")
-            #            .replace("+", "+\u200b")
-            #            .replace("-", "-\u200b")
-            #            .replace("/", "/\u200b")
-            # )
+            formula = (
+                formula
+                .replace(" x ", " ×\u200b")
+                .replace(" + ", " +\u200b")
+                .replace(" - ", " -\u200b")
+                .replace(" / ", " /\u200b")
+            )
 
             data.append([
                 str(idx),
                 name[:45],
                 fmt_qty(to_decimal(parts.get("qty", qty_item), "1")),
-                Paragraph(formula, formula_style),  # ✅ переноситься по ширині колонки
+                Paragraph(formula, formula_style),  # ✅ переноситься в клітинці
                 f"{ks_eff:.2f}",
                 f"{final_price:.2f}",
             ])
@@ -1095,20 +1095,14 @@ def generate_pdf(request, order_id):
         tbl = Table(data, colWidths=col_widths)
         tbl.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
-
             ("FONTNAME", (0, 0), (-1, -1), base_font),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
-
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0d6efd")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-
-            ("ALIGN", (0, 1), (0, -1), "CENTER"),  # №
-            ("ALIGN", (2, 1), (2, -1), "CENTER"),  # Qty
-            ("ALIGN", (3, 1), (3, -1), "LEFT"),  # ✅ Формула (Paragraph) зліва
-            ("ALIGN", (4, 1), (4, -1), "CENTER"),  # К/С
-            ("ALIGN", (5, 1), (5, -1), "RIGHT"),  # Ціна
-
+            ("ALIGN", (0, 1), (0, -1), "CENTER"),
+            ("ALIGN", (2, 1), (4, -1), "CENTER"),
+            ("ALIGN", (5, 1), (5, -1), "RIGHT"),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEADING", (0, 0), (-1, -1), 10),
         ]))
@@ -1122,6 +1116,71 @@ def generate_pdf(request, order_id):
 
         tbl.drawOn(p, 40, y)
         current_y = y - 20
+
+        effective_ks_sum_q = _q2(effective_ks_sum)
+        total_sum_q = _q2(total_sum)
+
+        production_days_internal = calc_production_days_from_ks(effective_ks_sum) or 1
+
+        if current_y < 160:
+            p.showPage()
+            current_y = height - 80
+
+        p.setFont(base_font, 12)
+        p.drawString(40, current_y, "Формула розрахунку")
+        current_y -= 14
+
+        p.setFont(base_font, 10)
+        p.drawString(40, current_y, f"Σ к/с: {effective_ks_sum_q:.2f} к/с")
+        current_y -= 16
+
+        p.setFont(base_font, 11)
+        p.drawString(40, current_y, f"(Σ позицій) × {_q2(rate):.2f} грн")
+        current_y -= 16
+
+        p.setFont(base_font, 12)
+        p.drawString(40, current_y, f"= {total_sum_q:.2f} грн")
+        current_y -= 18
+
+        extras_total = _q2(delivery + packing)
+        if extras_total > 0:
+            p.setFont(base_font, 10)
+            if delivery > 0:
+                p.drawString(40, current_y, f"+ Доставка: {_q2(delivery):.2f} грн")
+                current_y -= 14
+            if packing > 0:
+                p.drawString(40, current_y, f"+ Пакування: {_q2(packing):.2f} грн")
+                current_y -= 14
+
+            p.setFont(base_font, 12)
+            p.drawString(40, current_y, f"Разом: {_q2(total_sum_q + extras_total):.2f} грн")
+            current_y -= 18
+
+        text = p.beginText()
+        text.setTextOrigin(40, current_y)
+        text.setFont(base_font, 9)
+        text.setLeading(12)
+
+        for line in [
+            f"Орієнтовний термін виготовлення {production_days_internal} робочих днів.",
+            "Дата початку робіт призначається за наявності матеріалу та проєкту",
+            "на виготовлення замовлення і залежить від завантаження виробництва",
+            "Якщо в процесі перевірки креслення виявиться, що не повністю",
+            "розкритий обсяг робіт, невраховані роботи додатково збільшать",
+            "вартість проєкту.",
+        ]:
+            text.textLine(line)
+        p.drawText(text)
+
+        p.showPage()
+        p.save()
+        buffer.seek(0)
+
+        filename = f"Внутрішній_розрахунок_{order_number}.pdf"
+        resp = HttpResponse(buffer, content_type="application/pdf")
+        resp["Content-Disposition"] = f'inline; filename="{filename}"'
+        return resp
+
     # =====================================================================
     # ======================== SIMPLE/DETAILED =============================
     # =====================================================================
