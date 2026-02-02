@@ -157,7 +157,7 @@ M365_SYNC_CHAINS = {
     "final": [
         {"type": "child_contains", "value": "4-Проектування"},
         {"type": "search_all_contains", "value": "Проект"},     # якщо їх може бути багато
-        {"type": "child_contains", "value": "3 Креслення в роботу"},
+        #{"type": "child_contains", "value": "3 Креслення в роботу"},
         {"type": "search_all_contains", "value": "Для КС"},
     ],
 
@@ -168,6 +168,6 @@ M365_SYNC_CHAINS = {
     ],
     "rework_final": [
         {"type": "child_contains", "value": "3 Креслення в роботу"},
-        {"type": "search_all_contains", "value": "Для К.С"},
+        {"type": "search_all_contains", "value": "Для КС"},
     ],
 }
