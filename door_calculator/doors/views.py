@@ -154,27 +154,74 @@ def order_list(request):
 
 
 @csrf_exempt
+@require_POST
 def update_status(request, order_id):
     order = get_object_or_404(Order, id=order_id)
-    data = json.loads(request.body.decode("utf-8"))
 
-    # Зміна статусу
-    order.status = data.get("status", order.status)
+    raw = (request.body or b"").decode("utf-8", errors="replace")
+    data = json.loads(raw) if raw.strip() else {}
 
-    # Зміна відсотка виконання
-    progress = int(data.get("progress", order.completion_percent))
-    order.completion_percent = progress
+    # --- підтримка двох форматів ---
+    # A) {"status": "...", "progress": 10}
+    # B) {"kind": "...", "value": "..."}
+    if "kind" in data and "value" in data:
+        kind = data["kind"]
+        value = data["value"]
+
+        if kind == "status":
+            data["status"] = value
+        elif kind == "status_finance":
+            data["status_finance"] = value
+        elif kind == "progress":
+            data["progress"] = value
+        elif kind == "comment":
+            data["comment"] = value
+
+    before = {
+        "status": order.status,
+        "status_finance": getattr(order, "status_finance", None),
+        "progress": order.completion_percent,
+    }
+
+    # звичайний статус
+    if "status" in data:
+        order.status = data["status"]
+
+    # фінансовий статус
+    if "status_finance" in data:
+        order.status_finance = data["status_finance"]
+
+    # прогрес
+    progress = None
+    if "progress" in data:
+        try:
+            progress = int(data["progress"])
+        except (TypeError, ValueError):
+            return JsonResponse({"success": False, "error": "progress must be int"}, status=400)
+        order.completion_percent = progress
+
     order.save()
+    order.refresh_from_db()
 
-    # Зберігаємо у історію
-    OrderProgress.objects.create(
-        order=order,
-        date=date.today(),
-        percent=progress,
-        comment=data.get("comment", "")
-    )
+    if progress is not None:
+        OrderProgress.objects.create(
+            order=order,
+            date=date.today(),
+            percent=progress,
+            comment=data.get("comment", "")
+        )
 
-    return JsonResponse({"success": True})
+    return JsonResponse({
+        "success": True,
+        "before": before,
+        "after": {
+            "status": order.status,
+            "status_finance": getattr(order, "status_finance", None),
+            "progress": order.completion_percent,
+        },
+        "received": data,
+    })
+
 
 
 @require_POST

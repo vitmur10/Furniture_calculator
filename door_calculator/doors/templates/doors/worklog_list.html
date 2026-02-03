@@ -18,18 +18,6 @@
         </select>
       </div>
 
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">Замовлення</label>
-        <select name="order" class="form-select">
-          <option value="">Усі</option>
-          {% for o in orders %}
-            <option value="{{ o.id }}" {% if selected_order == o.id|stringformat:'s' %}selected{% endif %}>
-              №{{ o.order_number }}
-            </option>
-          {% endfor %}
-        </select>
-      </div>
-
       <div class="col-md-2">
         <label class="form-label fw-semibold">Від</label>
         <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
@@ -54,7 +42,6 @@
           <th>Дата</th>
           <th>Працівник</th>
           <th>Посада</th>
-          <th>Замовлення</th>
           <th>Годин</th>
           <th>Коментар</th>
         </tr>
@@ -65,7 +52,6 @@
           <td>{{ log.date|date:"d.m.Y" }}</td>
           <td>{{ log.worker.name }}</td>
           <td>{{ log.worker.position|default:"—" }}</td>
-          <td>{% if log.order %}№{{ log.order.order_number }}{% else %}—{% endif %}</td>
           <td>{{ log.hours|floatformat:2 }}</td>
           <td>{{ log.comment|default:"—" }}</td>
         </tr>
