@@ -17,6 +17,8 @@ from doors.services.m365_graph import (
 )
 import time
 import signal
+
+
 IGNORED_CALC_FILE_MARKERS = [
     "попередній_",
     "фінальний_",
@@ -26,9 +28,11 @@ IGNORED_CALC_FILE_MARKERS = [
     "_кп_",
 ]
 
+
 def is_own_generated_calc_file(filename: str) -> bool:
     name = (filename or "").lower()
     return any(marker in name for marker in IGNORED_CALC_FILE_MARKERS)
+
 
 # ----------------------------
 # Helpers
@@ -274,6 +278,8 @@ class Command(BaseCommand):
             updated_orders = 0
             created_files = 0
             created_images = 0
+            deleted_files = 0
+            deleted_images = 0
             skipped_root_folders_without_structure = 0
 
             for site_name in site_names:
@@ -373,6 +379,10 @@ class Command(BaseCommand):
                                 order.save(update_fields=update_fields)
                                 updated_orders += 1
 
+                        # ✅ NEW: збираємо що реально є в M365 для цього order
+                        seen_file_ids = set()
+                        seen_image_ids = set()
+
                         # Import from ALL leaf folders
                         for chain_name, leafs in chain_to_leafs.items():
                             self.stdout.write(self.style.NOTICE(
@@ -406,6 +416,8 @@ class Command(BaseCommand):
                                         continue
 
                                     if _is_image(file_name):
+                                        seen_image_ids.add(remote_item_id)
+
                                         existing = OrderImage.objects.filter(
                                             remote_drive_id=drive_id,
                                             remote_item_id=remote_item_id,
@@ -427,6 +439,8 @@ class Command(BaseCommand):
                                         )
                                         created_images += 1
                                     else:
+                                        seen_file_ids.add(remote_item_id)
+
                                         existing_f = OrderFile.objects.filter(
                                             remote_drive_id=drive_id,
                                             remote_item_id=remote_item_id,
@@ -450,10 +464,29 @@ class Command(BaseCommand):
                                         )
                                         created_files += 1
 
+                        # ✅ NEW: видаляємо локальні записи, яких вже немає в M365
+                        # файли
+                        qf = OrderFile.objects.filter(order=order, source="m365", remote_drive_id=drive_id)
+                        if seen_file_ids:
+                            df, _ = qf.exclude(remote_item_id__in=seen_file_ids).delete()
+                        else:
+                            # якщо не знайшли жодного файла в M365-структурі — видалимо всі локальні
+                            df, _ = qf.delete()
+                        deleted_files += df
+
+                        # картинки
+                        qi = OrderImage.objects.filter(order=order, remote_drive_id=drive_id)
+                        if seen_image_ids:
+                            di, _ = qi.exclude(remote_item_id__in=seen_image_ids).delete()
+                        else:
+                            di, _ = qi.delete()
+                        deleted_images += di
+
             self.stdout.write(self.style.SUCCESS(
                 "Done. "
                 f"created_orders={created_orders}, updated_orders={updated_orders}, "
                 f"created_images={created_images}, created_files={created_files}, "
+                f"deleted_images={deleted_images}, deleted_files={deleted_files}, "
                 f"skipped_root_folders_without_structure={skipped_root_folders_without_structure}"
             ))
 

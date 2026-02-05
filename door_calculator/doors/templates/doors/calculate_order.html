@@ -506,9 +506,298 @@
   background: #fff !important;
 }
 
+
+/* ===== Left panel: make PDF preview occupy full A4-like viewport when files/photos are collapsed ===== */
+@media (min-width: 992px){
+  /* Left column should behave like a vertical layout */
+  #sketch-section,
+  .order-sketch{
+    display: flex !important;
+    flex-direction: column !important;
+    max-height: calc(100vh - 120px) !important;
+  }
+
+  /* Preview box should be able to grow and fill remaining space */
+  #pdfPreviewBox{
+    flex: 1 1 auto !important;
+    min-height: 0 !important; /* critical for flex children */
+  }
+
+  /* Make the preview container fill the available height */
+  #pdfPreviewBox .file-preview{
+    height: 100% !important;
+    min-height: 0 !important;
+  }
+
+  /* Default: when photo/files visible, keep a nice preview height */
+  #sketch-section:not(.preview-only) #pdfPreviewBox .file-preview{
+    height: clamp(520px, 62vh, 820px) !important;
+  }
+
+  /* When photo/files collapsed, give preview almost full viewport (A4-friendly) */
+  #sketch-section.preview-only #pdfPreviewBox .file-preview{
+    height: calc(100vh - 170px) !important; /* header + paddings */
+  }
+}
+
+@media (max-width: 991px){
+  #sketch-section.preview-only #pdfPreviewBox .file-preview{
+    height: clamp(520px, 62vh, 820px) !important;
+  }
+}
+
+
+/* ===== Raise PDF preview as high as possible in preview-only mode ===== */
+@media (min-width: 992px){
+  /* Reduce sticky offset a bit (more vertical space) */
+  .order-sketch{
+    top: 56px !important;
+  }
+  /* When we are in preview-only, remove extra padding/margins above the preview */
+  #sketch-section.preview-only,
+  .order-sketch.preview-only{
+    padding-top: 10px !important;
+  }
+  #sketch-section.preview-only #pdfPreviewBox{
+    margin-top: 0 !important;
+  }
+  #sketch-section.preview-only #pdfPreviewBox .d-flex{
+    margin-bottom: 6px !important;
+  }
+  /* If any headings add space */
+  #sketch-section.preview-only #pdfPreviewBox .fw-bold{
+    margin: 0 !important;
+  }
+}
+
+
+/* ===== A4 FIT: raise preview and use almost full viewport in preview-only mode ===== */
+:root{
+  --app-header-h: 72px; /* adjust if header height differs */
+}
+
+@media (min-width: 992px){
+  /* Stick under header */
+  .order-sketch{
+    top: var(--app-header-h) !important;
+  }
+
+  /* Preview-only: remove extra top spacing */
+  #sketch-section.preview-only,
+  .order-sketch.preview-only{
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+  }
+
+  #sketch-section.preview-only #pdfPreviewBox{
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  /* Give preview almost full viewport height */
+  #sketch-section.preview-only #pdfPreviewBox .file-preview{
+    height: calc(100vh - var(--app-header-h) - 12px) !important;
+  }
+}
+
+
+/* ===== Footer minimization to avoid overlap ===== */
+footer,
+.app-footer,
+.site-footer{
+  height: auto !important;
+  min-height: 24px !important;
+  padding: 6px 0 !important;
+  font-size: 12px !important;
+}
+
+/* When preview-only is active, completely remove footer from flow */
+@media (min-width: 992px){
+  #sketch-section.preview-only ~ footer,
+  #sketch-section.preview-only ~ .app-footer,
+  #sketch-section.preview-only ~ .site-footer{
+    display: none !important;
+  }
+}
+
+
+/* ===== Compact BLUE HEADER when preview-only (more room for A4) ===== */
+@media (min-width: 992px){
+  /* Default header height used by sticky preview calculations */
+  :root{ --app-header-h: 72px; }
+
+  /* When preview-only is active, shrink header and update variable */
+  body.preview-only{
+    --app-header-h: 44px;
+  }
+
+  /* Try common header wrappers (safe overrides) */
+  body.preview-only header,
+  body.preview-only .navbar,
+  body.preview-only .app-header,
+  body.preview-only .site-header{
+    height: var(--app-header-h) !important;
+    min-height: var(--app-header-h) !important;
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+  }
+
+  body.preview-only header *,
+  body.preview-only .navbar *,
+  body.preview-only .app-header *,
+  body.preview-only .site-header *{
+    line-height: 1.1 !important;
+  }
+
+  body.preview-only .navbar .nav-link,
+  body.preview-only .app-header .nav-link,
+  body.preview-only .site-header .nav-link{
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+    font-size: 13px !important;
+  }
+
+  /* Keep the left sticky column aligned under the (now smaller) header */
+  body.preview-only .order-sketch{
+    top: var(--app-header-h) !important;
+  }
+
+  /* Maximize preview height (A4-friendly) */
+  body.preview-only #sketch-section.preview-only #pdfPreviewBox .file-preview{
+    height: calc(100vh - var(--app-header-h)) !important;
+  }
+}
+
+
+/* =========================
+   A4 LEFT PANEL + INLINE PREVIEW
+   ========================= */
+:root{
+  --app-header-h: 72px;         /* підлаштуй під реальну висоту header */
+  --a4-width: 794px;            /* ~210mm @ 96dpi */
+  --a4-height: 1123px;          /* ~297mm @ 96dpi */
+}
+
+@media (max-width: 991px){
+  :root{
+    --app-header-h: 56px;
+    --a4-width: 100%;
+    --a4-height: auto;
+  }
+}
+
+/* Force left column to be A4-like */
+#sketch-section,
+.order-sketch{
+  flex: 0 0 var(--a4-width) !important;
+  width: var(--a4-width) !important;
+  max-width: var(--a4-width) !important;
+  min-width: var(--a4-width) !important;
+
+  background: #fff !important;
+  border-right: 2px solid rgba(13,110,253,0.12) !important;
+
+  position: sticky !important;
+  top: var(--app-header-h) !important;
+
+  height: calc(100vh - var(--app-header-h)) !important;
+  max-height: calc(100vh - var(--app-header-h)) !important;
+
+  display: flex !important;
+  flex-direction: column !important;
+
+  padding: 12px !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* Right side: smaller / more compact */
+.order-form{
+  flex: 1 1 auto !important;
+  min-width: 420px !important;
+  padding: 18px !important;
+  overflow-y: auto !important;
+}
+
+/* When preview is opened: make it occupy the remaining A4 height */
+#pdfPreviewBox{
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  width: 100% !important;
+}
+
+#pdfPreviewBox .file-preview{
+  flex: 1 1 auto !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  background: #f3f4f6 !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+}
+
+#pdfPreviewBox iframe,
+#pdfPreviewBox embed,
+#pdfPreviewBox object{
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  background: #fff !important;
+}
+
+/* In normal mode keep preview reasonable if it's visible under photo/files */
+#sketch-section:not(.preview-only) #pdfPreviewBox .file-preview{
+  height: clamp(520px, 62vh, 820px) !important;
+}
+
+/* In preview-only mode (photo/files hidden) - maximize A4 viewport */
+#sketch-section.preview-only #pdfPreviewBox{
+  display: block !important;
+}
+#sketch-section.preview-only #pdfPreviewBox .file-preview{
+  height: 100% !important;
+}
+
+/* Nice paper feel */
+body.preview-only{
+  background: #e5e7eb;
+}
+body.preview-only .order-sketch{
+  box-shadow: 0 10px 30px rgba(0,0,0,.15);
+  border-radius: 4px;
+}
+
+
+/* ===== SINGLE PAGE FIT (no scroll) ===== */
+#pdfPreviewBox .file-preview{
+  height: calc(100vh - var(--app-header-h) - 70px) !important; /* header + preview title bar */
+  overflow: hidden !important;
+}
+#pdfPreviewBox iframe{
+  width: 100% !important;
+  height: 100% !important;
+  border: 0 !important;
+}
+
+
+/* ===== FORCE FIT ONE PAGE (FIXED ZOOM) ===== */
+#pdfPreviewBox{
+  margin-top: 6px !important;
+}
+#pdfPreviewBox .d-flex{
+  margin-bottom: 6px !important;
+}
+#pdfPreviewBox .file-preview{
+  height: calc(100vh - var(--app-header-h) - 46px) !important;
+  overflow: hidden !important;
+}
+#pdfPreviewBox iframe{
+  width: 100% !important;
+  height: 100% !important;
+  border: 0 !important;
+}
+
 </style>
 
-<button id="restoreSketch">📈 Показати ескіз</button>
 
 <div class="order-layout">
 
@@ -1284,21 +1573,6 @@ document.addEventListener("DOMContentLoaded", () => {
     btnFlat.click();
   }
 
-  // Згортання / показ ескізу
-  if (toggleBtn && restoreBtn && sketchSection) {
-    toggleBtn.addEventListener("click", () => {
-      sketchSection.classList.add("collapsed");
-      toggleBtn.style.display = "none";
-      restoreBtn.style.display = "block";
-    });
-
-    restoreBtn.addEventListener("click", () => {
-      sketchSection.classList.remove("collapsed");
-      toggleBtn.style.display = "block";
-      restoreBtn.style.display = "none";
-    });
-  }
-
   // Показ фінальної форми
   if (finishBtn && finalForm) {
     finishBtn.addEventListener("click", () => {
@@ -1700,11 +1974,32 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  console.log("preview script loaded");
+  const previewBox    = document.getElementById("pdfPreviewBox");
+  const pdfEmbed      = document.getElementById("pdfEmbed");
+  const closeBtn      = document.getElementById("closePreview");
 
-  const previewBox = document.getElementById("pdfPreviewBox");
-  const pdfEmbed   = document.getElementById("pdfEmbed");
-  const closeBtn   = document.getElementById("closePreview");
+  const hidePart      = document.getElementById("sketchHidePart");
+  const sketchSection = document.getElementById("sketch-section");
+  const btnHide       = document.getElementById("toggleSketch");
+  const btnShow       = document.getElementById("restoreSketch");
+
+  function enterPreviewMode() {
+    if (hidePart) hidePart.style.display = "none";
+    if (sketchSection) sketchSection.classList.add("preview-only");
+    document.body.classList.add("preview-only");
+    if (btnHide) btnHide.style.display = "none";
+    if (btnShow) btnShow.style.display = "inline-block";
+  }
+
+  function exitPreviewMode() {
+    if (previewBox) previewBox.style.display = "none";
+    if (pdfEmbed) pdfEmbed.src = "";
+    if (hidePart) hidePart.style.display = "";
+    if (sketchSection) sketchSection.classList.remove("preview-only");
+    document.body.classList.remove("preview-only");
+    if (btnShow) btnShow.style.display = "none";
+    if (btnHide) btnHide.style.display = "inline-block";
+  }
 
   // Делегування кліку (працює навіть якщо кнопки генеруються/оновлюються)
   document.addEventListener("click", (e) => {
@@ -1713,28 +2008,43 @@ document.addEventListener("DOMContentLoaded", () => {
 
     e.preventDefault();
     const url = btn.getAttribute("data-preview-url");
-    console.log("clicked preview, url=", url);
-
     if (!url) {
       alert("Немає data-preview-url на кнопці");
       return;
     }
 
-    // форсимо перезавантаження embed
-    pdfEmbed.src = "";
+    // показуємо A4-перегляд
+    enterPreviewMode();
+
+    // форсимо перезавантаження iframe
+    if (pdfEmbed) pdfEmbed.src = "";
     setTimeout(() => {
-      const hasHash = url.includes("#");
-      const fitHash = "zoom=page-width&view=FitH";
-      const fitUrl = url + (hasHash ? "&" : "#") + fitHash;
-      pdfEmbed.src = fitUrl;
-      previewBox.style.display = "block";
+      const fitHash = "page=1&zoom=70&view=Fit";
+      const fitUrl = url.split("#")[0] + "#" + fitHash;
+      if (pdfEmbed) pdfEmbed.src = fitUrl;
+      if (previewBox) previewBox.style.display = "block";
     }, 0);
   });
 
   if (closeBtn) {
-    closeBtn.addEventListener("click", () => {
-      previewBox.style.display = "none";
-      pdfEmbed.src = "";
+    closeBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      exitPreviewMode();
+    });
+  }
+
+  // Якщо користувач натисне "Показати" — це вихід з preview-only, але preview лишаємо закритим
+  if (btnShow) {
+    btnShow.addEventListener("click", (e) => {
+      // цей listener може бути перевстановлений нижчим скриптом-клоном, тому тут робимо м’яко
+      // (не зупиняємо, просто виходимо з preview-only)
+      if (previewBox && previewBox.style.display === "block") {
+        // не заважаємо сценарію знизу; close робить повний reset
+        return;
+      }
+      if (hidePart) hidePart.style.display = "";
+      if (sketchSection) sketchSection.classList.remove("preview-only");
+      document.body.classList.remove("preview-only");
     });
   }
 });
@@ -1773,6 +2083,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
 document.addEventListener("DOMContentLoaded", () => {
   const hidePart = document.getElementById("sketchHidePart");
+  const previewBox = document.getElementById("pdfPreviewBox");
+  const pdfEmbed = document.getElementById("pdfEmbed");
   const sketchSection = document.getElementById("sketch-section");
 
   let btnHide = document.getElementById("toggleSketch");
@@ -1800,13 +2112,20 @@ document.addEventListener("DOMContentLoaded", () => {
   btnHide.addEventListener("click", (e) => {
     e.preventDefault();
     hidePart.style.display = "none";
+    sketchSection.classList.add("preview-only");
+    document.body.classList.add("preview-only");
     btnHide.style.display = "none";
     btnShow.style.display = "inline-block";
+    if (previewBox && pdfEmbed && pdfEmbed.src) {
+      previewBox.style.display = "block";
+    }
   });
 
   btnShow.addEventListener("click", (e) => {
     e.preventDefault();
     hidePart.style.display = "";
+    sketchSection.classList.remove("preview-only");
+    document.body.classList.remove("preview-only");
     btnShow.style.display = "none";
     btnHide.style.display = "inline-block";
   });
