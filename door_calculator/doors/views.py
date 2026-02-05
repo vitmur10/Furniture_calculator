@@ -2551,12 +2551,18 @@ def sync_internal_pdf(request, order_id):
 
     mode_label = "Попередній" if mode == "precalc" else "Фінальний"
 
-    pdfs = [
-        ("detailed", {**base_params}, f"{mode_label}_Детальний_{order.order_number}.pdf"),
-        ("offer", {**base_params, "simple": 1}, f"{mode_label}_Комерційна_пропозиція_{order.order_number}.pdf"),
-        ("internal", {**base_params, "internal": 1}, f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
-    ]
-
+    if order.work_type == "rework":
+        pdfs = [
+            ("detailed", {**base_params}, f"{mode_label}_Детальний_{order.order_number}.pdf"),
+            ("offer", {**base_params, "simple": 1}, f"{mode_label}_Комерційна_пропозиція_{order.order_number}.pdf"),
+            (
+            "internal", {**base_params, "internal": 1}, f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
+        ]
+    else:
+        pdfs = [
+            (
+            "internal", {**base_params, "internal": 1}, f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
+        ]
     rendered = []
     for label, params, filename in pdfs:
         pdf_bytes = _render_pdf_bytes(params)
