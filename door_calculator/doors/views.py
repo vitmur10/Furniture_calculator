@@ -1024,7 +1024,7 @@ def generate_pdf(request, order_id):
             p.drawRightString(x_right, height - 160, f"IBAN: {safe_text(company.iban)}")
 
     # ---------- заголовок ----------
-    title_y = height - 155
+    title_y = height - 170
 
     p.setFont(base_font, 15)
     if internal_mode:
@@ -1079,9 +1079,12 @@ def generate_pdf(request, order_id):
 
         rate = Decimal(str(order.price_per_ks or current_rate))
 
-        data = [["№", "Позиція", "Qty", "Формула", "К/С", "Ціна, грн"]]
+        data = [[
+            "№", "Позиція", "Qty", "Формула", "К/С",
+            "Нац,%", "Без націнки", "Ціна з націнкою"
+        ]]
 
-        # ✅ Стиль для переносу формули
+        # ✅ Стиль для переносу форули
         styles = getSampleStyleSheet()
         formula_style = ParagraphStyle(
             name="FormulaStyle",
@@ -1100,6 +1103,7 @@ def generate_pdf(request, order_id):
 
         idx = 1
         for it in internal_items:
+            # Доставка / пакування як рядки в таблиці
             parts = build_item_formula_parts(it)
 
             item_markup = getattr(it, "markup_percent", None)
@@ -1128,17 +1132,21 @@ def generate_pdf(request, order_id):
                 .replace(" / ", " /\u200b")
             )
 
+            markup_sum = _q2(final_price - base_price)
+
             data.append([
                 str(idx),
                 name[:45],
                 fmt_qty(to_decimal(parts.get("qty", qty_item), "1")),
-                Paragraph(formula, formula_style),  # ✅ переноситься в клітинці
+                Paragraph(formula, formula_style),
                 f"{ks_eff:.2f}",
+                f"{_q2(m):.2f}",
+                f"{base_price:.2f}",
                 f"{final_price:.2f}",
             ])
             idx += 1
 
-        col_widths = [25, 165, 45, 165, 45, 70]
+        col_widths = [20, 120, 35, 150, 35, 30, 70, 70]
         tbl = Table(data, colWidths=col_widths)
         tbl.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
