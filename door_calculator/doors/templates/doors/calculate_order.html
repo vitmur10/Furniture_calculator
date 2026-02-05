@@ -11,6 +11,16 @@
       max-width: 20.833%;
     }
 
+    .addons-categories-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    /* щоб input-group не ламав grid */
+    .addons-grid .input-group {
+      width: 100%;
+    }
 
     /* ✅ Прибираємо відступи зліва/справа по всій сторінці (Bootstrap container/row) */
     html, body { margin: 0; padding: 0; }
@@ -1155,29 +1165,87 @@ body.preview-only .order-sketch{
         <input type="number" name="item_qty" min="1" value="1" class="form-control" required>
       </div>
 
-      <div class="mb-3 addons-columns">
-        <label class="form-label fw-bold">Доповнення (з кількістю):</label>
-        {% for a in addons %}
-        <div class="input-group mb-2 ">
-          <div class="input-group-text">
-            <input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
-          </div>
-          <span class="input-group-text w-50">{{ a.name }}</span>
-          <input type="number" name="add_qty_{{ a.id }}" min="1" value="1" class="form-control">
-          <span class="input-group-text">{{ a.ks_value }} к/с</span>
-        </div>
-        {% endfor %}
+<div class="mb-3">
+  <label class="form-label fw-bold">Доповнення (з кількістю):</label>
+
+  <div class="addons-categories-grid">
+
+    {# ===== Загальні доповнення ===== #}
+    <div class="category-card border rounded p-3">
+      <div class="category-header" data-target="add-body-global">
+        <h6 class="fw-bold mb-0">🧩 Загальні</h6>
+        <button type="button"
+                class="category-toggle-btn btn btn-sm p-0"
+                data-target="add-body-global">
+          <span class="icon">▾</span>
+          <span class="text">Згорнути</span>
+        </button>
       </div>
 
-  <!--    <div class="mb-3">
-        <label class="form-label fw-bold">Коефіцієнти:</label>
-        {% for c in coefficients %}
-        <div class="form-check form-check-inline mb-2">
-          <input type="checkbox" name="coefficients" value="{{ c.id }}" class="form-check-input">
-          <label class="form-check-label">{{ c.name }} ×{{ c.value }}</label>
+      <div id="add-body-global" class="category-body mt-2">
+        {% for a in addons_global %}
+        <div class="input-group mb-2">
+          <div class="input-group-text">
+            <input type="checkbox"
+                   name="additions"
+                   value="{{ a.id }}"
+                   class="form-check-input mt-0">
+          </div>
+          <span class="input-group-text w-50">{{ a.name }}</span>
+          <input type="number"
+                 name="add_qty_{{ a.id }}"
+                 min="1"
+                 value="1"
+                 class="form-control">
+          <span class="input-group-text">{{ a.ks_value }} к/с</span>
         </div>
+        {% empty %}
+          <div class="text-muted small">Немає доповнень</div>
         {% endfor %}
-      </div>-->
+      </div>
+    </div>
+
+    {# ===== Доповнення по категоріях ===== #}
+    {% for row in addons_by_category %}
+      {% with cat=row.cat cat_adds=row.addons %}
+      <div class="category-card border rounded p-3">
+        <div class="category-header" data-target="add-body-{{ cat.id }}">
+          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+          <button type="button"
+                  class="category-toggle-btn btn btn-sm p-0"
+                  data-target="add-body-{{ cat.id }}">
+            <span class="icon">▾</span>
+            <span class="text">Згорнути</span>
+          </button>
+        </div>
+
+        <div id="add-body-{{ cat.id }}" class="category-body mt-2">
+          {% for a in cat_adds %}
+          <div class="input-group mb-2">
+            <div class="input-group-text">
+              <input type="checkbox"
+                     name="additions"
+                     value="{{ a.id }}"
+                     class="form-check-input mt-0">
+            </div>
+            <span class="input-group-text w-50">{{ a.name }}</span>
+            <input type="number"
+                   name="add_qty_{{ a.id }}"
+                   min="1"
+                   value="1"
+                   class="form-control">
+            <span class="input-group-text">{{ a.ks_value }} к/с</span>
+          </div>
+          {% empty %}
+            <div class="text-muted small">Немає доповнень</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endwith %}
+    {% endfor %}
+
+  </div>
+</div>
 
       <div class="text-center mb-4">
         <button type="submit" class="btn btn-danger w-100 py-2">➕ Додати конструкцію</button>

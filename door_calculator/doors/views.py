@@ -570,7 +570,11 @@ def calculate_order(request, order_id):
 
         # tooltip
         NL = "\n"
-        prod_lines = [f"• {op.product.name}: {_q2(Decimal(str(op.product.base_ks)))} × {Decimal(op.quantity)} = {_q2(Decimal(str(op.product.base_ks)) * Decimal(op.quantity))}" for op in it.product_items.all()]
+        prod_lines = [
+            f"• {op.product.name}: {_q2(Decimal(str(op.product.base_ks)))} × {Decimal(op.quantity)} = "
+            f"{_q2(Decimal(str(op.product.base_ks)) * Decimal(op.quantity))}"
+            for op in it.product_items.all()
+        ]
         products_breakdown = NL.join(prod_lines) if prod_lines else "—"
 
         add_lines = [f"• {ai.addition.name} ×{_q2(ai.quantity)}: {_q2(Decimal(str(ai.total_ks() or 0)))}" for ai in it.addition_items.all()]
@@ -582,7 +586,14 @@ def calculate_order(request, order_id):
         if coef_terms:
             tail += f"\nКоефіцієнт: {it.ks_coef}"
 
-        it.ks_tooltip = f"ПРОДУКТИ:\n{products_breakdown}\n\nСУМА продуктів: {it.ks_products} к/с\n\nДОПОВНЕННЯ:\n{addons_breakdown}\n\nСУМА доповнень: {it.ks_adds} к/с\n\nКОЕФІЦІЄНТИ:\n{coefs_breakdown}\n\n{tail}"
+        it.ks_tooltip = (
+            f"ПРОДУКТИ:\n{products_breakdown}\n\n"
+            f"СУМА продуктів: {it.ks_products} к/с\n\n"
+            f"ДОПОВНЕННЯ:\n{addons_breakdown}\n\n"
+            f"СУМА доповнень: {it.ks_adds} к/с\n\n"
+            f"КОЕФІЦІЄНТИ:\n{coefs_breakdown}\n\n"
+            f"{tail}"
+        )
 
     effective_ks = _q2(effective_ks)
     total_sum = _q2(total_sum)
@@ -590,7 +601,21 @@ def calculate_order(request, order_id):
 
     global_coeffs = Coefficient.objects.filter(applies_globally=True).order_by("name")
     category_coeffs = Coefficient.objects.filter(applies_globally=False).order_by("name")
-    default_addons = Addition.objects.filter(applies_globally=True).order_by("name")
+
+    # ====== ДОПОВНЕННЯ: глобальні + по категоріях (НОВЕ) ======
+    addons_global = Addition.objects.filter(applies_globally=True).order_by("name")
+
+    # список, щоб у шаблоні не потрібен був get_item-фільтр
+    addons_by_category = []
+    for cat in categories:
+        cat_adds = (
+            Addition.objects
+            .filter(applies_globally=False, categories=cat)
+            .distinct()
+            .order_by("name")
+        )
+        addons_by_category.append({"cat": cat, "addons": cat_adds})
+
     customers = Customer.objects.all().order_by("-created_at")
 
     markers_by_image = {}
@@ -614,7 +639,14 @@ def calculate_order(request, order_id):
         "products": products,
         "global_coeffs": global_coeffs,
         "category_coeffs": category_coeffs,
-        "addons": default_addons,
+
+        # старе поле залишив для сумісності (якщо шаблон ще його використовує)
+        "addons": addons_global,
+
+        # нові поля для відображення по категоріях + згортання
+        "addons_global": addons_global,
+        "addons_by_category": addons_by_category,
+
         "rate": price_per_ks,
         "items": items,
         "total": total_sum,
