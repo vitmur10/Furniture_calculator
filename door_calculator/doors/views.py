@@ -1938,6 +1938,7 @@ def options_for_products(request):
     })
 
 
+
 def order_item_edit(request, item_id):
     item = get_object_or_404(OrderItem, id=item_id)
     order = item.order
@@ -1946,46 +1947,77 @@ def order_item_edit(request, item_id):
     all_additions = Addition.objects.all()
     all_coeffs = Coefficient.objects.all()
 
+    def _to_decimal_or_one(val):
+        try:
+            v = Decimal(str(val).replace(",", "."))
+            return max(v, Decimal("0.01"))
+        except Exception:
+            return Decimal("1")
+
     if request.method == "POST":
         # базові поля
         item.name = request.POST.get("name") or item.name
-        try:
-            item.quantity = max(1, int(request.POST.get("quantity", item.quantity)))
-        except:
-            item.quantity = 1
+        item.quantity = _to_decimal_or_one(request.POST.get("quantity", item.quantity))
 
-        # вироби
-        selected_products = request.POST.getlist("products")
-        item.products.set(selected_products or [])
+        # =========================
+        # ВИРОБИ з кількістю (OrderItemProduct)
+        # =========================
+        selected_products = set(request.POST.getlist("products"))  # рядки id
 
-        # коефіцієнти
+        existing_prod_map = {str(pi.product_id): pi for pi in item.product_items.all()}
+        keep_prod_ids = set()
+
+        to_update = []
+        to_create = []
+
+        for p in all_products:
+            pid = str(p.id)
+            qty_field = f"prod_qty_{p.id}"
+
+            if pid in selected_products:
+                qty = _to_decimal_or_one(request.POST.get(qty_field, "1"))
+                keep_prod_ids.add(pid)
+
+                if pid in existing_prod_map:
+                    pi = existing_prod_map[pid]
+                    pi.quantity = qty
+                    to_update.append(pi)
+                else:
+                    to_create.append(OrderItemProduct(order_item=item, product=p, quantity=qty))
+            else:
+                # якщо продукт знято — видалити
+                if pid in existing_prod_map:
+                    existing_prod_map[pid].delete()
+
+        if to_update:
+            OrderItemProduct.objects.bulk_update(to_update, ["quantity"])
+        if to_create:
+            OrderItemProduct.objects.bulk_create(to_create)
+
+        # коефіцієнти (як було)
         selected_coeffs = request.POST.getlist("coefficients")
         item.coefficients.set(selected_coeffs or [])
 
-        # доповнення з кількостями
+        # =========================
+        # ДОПОВНЕННЯ з кількістю (AdditionItem) — у тебе вже працює :contentReference[oaicite:6]{index=6}
+        # =========================
         selected_adds = set(request.POST.getlist("additions"))
-        # існуючі AdditionItem по цій позиції
-        existing_map = {str(ai.addition_id): ai for ai in item.addition_items.all()}
+        existing_add_map = {str(ai.addition_id): ai for ai in item.addition_items.all()}
 
-        # оновити / створити обрані
         for add in all_additions:
             add_id_str = str(add.id)
             qty_field = f"add_qty_{add.id}"
             if add_id_str in selected_adds:
-                try:
-                    qty = max(1, int(request.POST.get(qty_field, "1")))
-                except:
-                    qty = 1
-                if add_id_str in existing_map:
-                    ai = existing_map[add_id_str]
+                qty = _to_decimal_or_one(request.POST.get(qty_field, "1"))
+                if add_id_str in existing_add_map:
+                    ai = existing_add_map[add_id_str]
                     ai.quantity = qty
                     ai.save(update_fields=["quantity"])
                 else:
                     AdditionItem.objects.create(order_item=item, addition=add, quantity=qty)
             else:
-                # якщо не вибрано — видалити, якщо було
-                if add_id_str in existing_map:
-                    existing_map[add_id_str].delete()
+                if add_id_str in existing_add_map:
+                    existing_add_map[add_id_str].delete()
 
         item.save()
         _recalc_order_totals(order)
@@ -1993,8 +2025,12 @@ def order_item_edit(request, item_id):
         messages.success(request, "Позицію успішно оновлено ✅")
         return redirect("calculate_order", order_id=order.id)
 
-    # підготовка стану для форми
-    selected_products_ids = set(item.products.values_list("id", flat=True))
+    # =========================
+    # GET: підготовка стану для форми
+    # =========================
+    selected_products_ids = set(item.product_items.values_list("product_id", flat=True))
+    product_qty = {pi.product_id: pi.quantity for pi in item.product_items.all()}
+
     selected_coeffs_ids = set(item.coefficients.values_list("id", flat=True))
     addition_qty = {ai.addition_id: ai.quantity for ai in item.addition_items.all()}
 
@@ -2005,10 +2041,10 @@ def order_item_edit(request, item_id):
         "coefficients": all_coeffs,
         "addons": all_additions,
         "selected_products_ids": selected_products_ids,
+        "product_qty": product_qty,
         "selected_coeffs_ids": selected_coeffs_ids,
         "addition_qty": addition_qty,
     })
-
 
 def order_item_delete(request, item_id):
     item = get_object_or_404(OrderItem, id=item_id)

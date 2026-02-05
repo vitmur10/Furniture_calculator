@@ -219,14 +219,15 @@ class Customer(models.Model):
 
 class Order(models.Model):
     STATUS_CHOICES = [
+        ("calculation", "Розрахунки"),
         ("in_progress", "В роботі"),
         ("completed", "Завершено"),
         ("postponed", "Відкладено"),
-        ("calculation", "Розрахунки")
     ]
     STATUS_CHOICES_FINANCE = [
         ("paid", "Сплачено"),
         ("awaiting_payment", "Очікує оплату"),
+        ("-----", "-----"),
     ]
     WORK_TYPE_CHOICES = [
         ("project", "Проєкт"),

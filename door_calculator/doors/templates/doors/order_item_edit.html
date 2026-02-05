@@ -22,15 +22,30 @@
 
     <div class="row">
       <div class="col-lg-6">
-        <h6 class="fw-bold mb-2">Вироби</h6>
+        <h6 class="fw-bold mb-2">Вироби (з кількістю)</h6>
         <div class="border rounded p-2" style="max-height: 360px; overflow:auto;">
           {% for p in products %}
-          <label class="d-flex align-items-center gap-2 py-1 border-bottom">
-            <input type="checkbox" name="products" value="{{ p.id }}"
-                   {% if p.id in selected_products_ids %}checked{% endif %}>
-            {% if p.image %}<img src="{{ p.image.url }}" width="40" height="40" style="object-fit:cover;border-radius:6px">{% endif %}
-            <span>{{ p.name }} ({{ p.base_ks }} к/с){% if p.category %} — <small class="text-muted">{{ p.category.name }}</small>{% endif %}</span>
-          </label>
+          <div class="input-group input-group-sm mb-2">
+            <div class="input-group-text">
+              <input type="checkbox" class="form-check-input mt-0" name="products" value="{{ p.id }}"
+                     {% if p.id in selected_products_ids %}checked{% endif %}>
+            </div>
+
+            <span class="input-group-text w-50">
+              {% if p.image %}
+                <img src="{{ p.image.url }}" width="32" height="32"
+                     style="object-fit:cover;border-radius:6px;margin-right:8px">
+              {% endif %}
+              {{ p.name }}
+              <small class="text-muted">
+                ({{ p.base_ks }} к/с){% if p.category %} — {{ p.category.name }}{% endif %}
+              </small>
+            </span>
+
+            <input type="number" class="form-control" name="prod_qty_{{ p.id }}" min="0.01" step="0.01"
+                   value="{{ product_qty|get_item:p.id|default:1 }}">
+            <span class="input-group-text">шт</span>
+          </div>
           {% empty %}
           <div class="text-muted small">Немає виробів</div>
           {% endfor %}
