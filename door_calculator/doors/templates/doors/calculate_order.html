@@ -806,6 +806,285 @@ body.preview-only .order-sketch{
   border: 0 !important;
 }
 
+
+
+/* =========================
+   A4 PDF VIEW (FINAL OVERRIDES)
+   ========================= */
+:root{
+  --app-header-h: 72px;
+  --a4-width: 794px;   /* 210mm @ 96dpi */
+  --a4-height: 1123px; /* 297mm @ 96dpi */
+}
+
+/* Desktop: left panel behaves like A4 viewport */
+@media (min-width: 992px){
+  #sketch-section,
+  .order-sketch{
+    flex: 0 0 var(--a4-width) !important;
+    width: var(--a4-width) !important;
+    min-width: var(--a4-width) !important;
+    max-width: var(--a4-width) !important;
+
+    position: sticky !important;
+    top: var(--app-header-h) !important;
+
+    height: calc(100vh - var(--app-header-h)) !important;
+    max-height: calc(100vh - var(--app-header-h)) !important;
+
+    display: flex !important;
+    flex-direction: column !important;
+
+    background: #fff !important;
+    overflow: hidden !important;
+    padding: 12px !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Right side stays usable */
+  .order-form{
+    flex: 1 1 auto !important;
+    min-width: 420px !important;
+    overflow-y: auto !important;
+  }
+}
+
+/* Mobile: normal flow */
+@media (max-width: 991px){
+  #sketch-section,
+  .order-sketch{
+    position: static !important;
+    top: auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}
+
+/* PDF preview fills remaining height; no inner scroll */
+#pdfPreviewBox{
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  width: 100% !important;
+}
+
+#pdfPreviewBox .file-preview{
+  flex: 1 1 auto !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  background: #f3f4f6 !important;
+  border-radius: 8px !important;
+}
+
+#pdfPreviewBox iframe,
+#pdfPreviewBox embed,
+#pdfPreviewBox object{
+  width: 100% !important;
+  height: 100% !important;
+  border: 0 !important;
+  background: #fff !important;
+}
+
+/* When PDF is opened, we can maximize space */
+body.preview-only{
+  --app-header-h: 56px; /* a bit more room; tweak if needed */
+}
+body.preview-only #sketchHidePart{
+  display: none !important; /* hide photos/files when preview is active */
+}
+
+
+
+/* =========================
+   FINAL OVERRIDES (as requested)
+   - top-left panel under header
+   - right form stays on the right
+   - header menu buttons aligned to the right
+   ========================= */
+:root{
+  /* Approx total header height (brand row + nav row). Tweak if needed */
+  --app-header-h: 120px;
+}
+
+/* Keep 2 columns on desktop (restore right side) */
+.order-layout{
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: flex-start !important;
+}
+
+/* Restore left column to adaptive (NOT A4-fixed) */
+#sketch-section,
+.order-sketch{
+  flex: 0 0 clamp(420px, 28vw, 520px) !important;
+  width: clamp(420px, 28vw, 520px) !important;
+  min-width: 420px !important;
+  max-width: 520px !important;
+
+  /* stick right under the header (top) */
+  position: sticky !important;
+  top: var(--app-header-h) !important;
+
+  /* don't force full-viewport height (it was breaking layout) */
+  height: auto !important;
+  max-height: none !important;
+
+  padding: 12px !important;
+  overflow: hidden !important;
+  background: transparent !important;
+  border-right: 3px solid #0d6efd22 !important;
+  box-sizing: border-box !important;
+}
+
+/* Restore right panel sizing */
+.order-form{
+  flex: 1 1 auto !important;
+  min-width: 600px !important;
+  padding: clamp(1.5rem, 2vw, 3rem) !important;
+  overflow-y: auto !important;
+}
+
+/* Lift preview to the top of the left column when opened */
+#pdfPreviewBox{
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* Header: move EVERYTHING (logo + menu + buttons) fully to the right */
+header .navbar > .container-fluid,
+.navbar > .container-fluid{
+  justify-content: flex-end !important;
+}
+
+/* Push brand (logo/text) to the right side as well */
+header .navbar-brand,
+.navbar .navbar-brand{
+  margin-left: auto !important;
+  margin-right: 0 !important;
+  white-space: nowrap !important;
+}
+
+/* Don't let collapse/nav stretch full width */
+header .navbar-collapse,
+.navbar-collapse{
+  justify-content: flex-end !important;
+  flex-grow: 0 !important;
+}
+
+header .navbar-nav,
+.navbar .navbar-nav{
+  margin-left: 0 !important;
+  justify-content: flex-end !important;
+  width: auto !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+}
+
+/* Keep burger/button on the right too */
+header .navbar-toggler,
+.navbar .navbar-toggler{
+  order: 99;
+  margin-left: 10px;
+}
+
+/* Keep mobile behavior (stack) */
+@media (max-width: 991px){
+  :root{ --app-header-h: 56px; }
+  .order-layout{ flex-direction: column !important; }
+  #sketch-section,
+  .order-sketch{
+    position: static !important;
+    top: auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    border-right: none !important;
+    border-bottom: 3px solid #0d6efd22 !important;
+    overflow: visible !important;
+  }
+  .order-form{
+    min-width: 0 !important;
+  }
+}
+
+
+/* ===== LEFT BLOCK: PUSH TO TOP + WIDER LEFT COLUMN (AUTO) ===== */
+:root{
+  --left-min: 520px;
+  --left-vw: 42vw;
+  --left-max: 760px;
+}
+
+/* Lift left column content closer to top */
+.order-sketch,
+#sketch-section{
+  padding-top: 0 !important;
+  margin-top: 0 !important;
+
+  /* Wider left column without breaking right side */
+  flex: 0 0 clamp(var(--left-min), var(--left-vw), var(--left-max)) !important;
+  width: clamp(var(--left-min), var(--left-vw), var(--left-max)) !important;
+  max-width: clamp(var(--left-min), var(--left-vw), var(--left-max)) !important;
+}
+
+/* Reduce inner top spacing so “Фото/Файли” starts higher */
+#sketchHidePart{
+  margin-top: 0 !important;
+  padding-top: 8px !important;
+}
+
+/* Keep collapse button nicely aligned */
+#toggleSketch{
+  margin-left: auto !important;
+}
+
+
+/* =========================
+   FULL UPDATE (USER REQUEST)
+   1) прибрати "синє" зліва (це був header-gap + border)
+   2) підняти ліву колонку до самого верху
+   ========================= */
+
+/* ВАЖЛИВО: скидаємо змінну, яка опускала sticky-колонку */
+:root{ --app-header-h: 0px !important; }
+
+/* Піднімаємо всю робочу область (щоб не було "синьої зони" зліва) */
+.order-layout{
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+  min-height: 100vh !important;
+}
+
+/* Ліва колонка: без синьої вертикалі, максимально вгору */
+#sketch-section,
+.order-sketch{
+  top: 0 !important;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+  border-right: none !important;
+  background: transparent !important;
+}
+
+/* Прибираємо внутрішні відступи над контентом лівої колонки */
+#sketchHidePart,
+#pdfPreviewBox{
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* Мобілка: все як було (без sticky) */
+@media (max-width: 991px){
+  #sketch-section,
+  .order-sketch{
+    position: static !important;
+    top: auto !important;
+  }
+}
+
 </style>
 
 
@@ -1170,19 +1449,104 @@ body.preview-only .order-sketch{
 
   <div class="addons-categories-grid">
 
+  <!-- Ліва колонка: Двері → Розсувна → Загальні -->
+  <div class="addons-col d-flex flex-column gap-2">
+
+    {# ===== Двері ===== #}
+    {% for row in addons_by_category %}
+      {% with cat=row.cat cat_adds=row.addons %}
+        {% if cat.name|lower == 'двері' %}
+        <div class="category-card border rounded p-3">
+          <div class="category-header" data-target="add-body-{{ cat.id }}">
+            <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+            <button type="button"
+                    class="category-toggle-btn btn btn-sm p-0 collapsed"
+                    data-target="add-body-{{ cat.id }}">
+              <span class="icon">▾</span>
+              <span class="text">Розгорнути</span>
+            </button>
+          </div>
+
+          <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+            {% for a in cat_adds %}
+            <div class="input-group mb-2">
+              <div class="input-group-text">
+                <input type="checkbox"
+                       name="additions"
+                       value="{{ a.id }}"
+                       class="form-check-input mt-0">
+              </div>
+              <span class="input-group-text w-50">{{ a.name }}</span>
+              <input type="number"
+                     name="add_qty_{{ a.id }}"
+                     min="1"
+                     value="1"
+                     class="form-control">
+              <span class="input-group-text">{{ a.ks_value }} к/с</span>
+            </div>
+            {% empty %}
+              <div class="text-muted small">Немає доповнень</div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      {% endwith %}
+    {% endfor %}
+
+    {# ===== Розсувна ===== #}
+    {% for row in addons_by_category %}
+      {% with cat=row.cat cat_adds=row.addons %}
+        {% if cat.name|lower == 'розсувна' %}
+        <div class="category-card border rounded p-3">
+          <div class="category-header" data-target="add-body-{{ cat.id }}">
+            <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+            <button type="button"
+                    class="category-toggle-btn btn btn-sm p-0 collapsed"
+                    data-target="add-body-{{ cat.id }}">
+              <span class="icon">▾</span>
+              <span class="text">Розгорнути</span>
+            </button>
+          </div>
+
+          <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+            {% for a in cat_adds %}
+            <div class="input-group mb-2">
+              <div class="input-group-text">
+                <input type="checkbox"
+                       name="additions"
+                       value="{{ a.id }}"
+                       class="form-check-input mt-0">
+              </div>
+              <span class="input-group-text w-50">{{ a.name }}</span>
+              <input type="number"
+                     name="add_qty_{{ a.id }}"
+                     min="1"
+                     value="1"
+                     class="form-control">
+              <span class="input-group-text">{{ a.ks_value }} к/с</span>
+            </div>
+            {% empty %}
+              <div class="text-muted small">Немає доповнень</div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      {% endwith %}
+    {% endfor %}
+
     {# ===== Загальні доповнення ===== #}
     <div class="category-card border rounded p-3">
       <div class="category-header" data-target="add-body-global">
         <h6 class="fw-bold mb-0">🧩 Загальні</h6>
         <button type="button"
-                class="category-toggle-btn btn btn-sm p-0"
+                class="category-toggle-btn btn btn-sm p-0 collapsed"
                 data-target="add-body-global">
           <span class="icon">▾</span>
-          <span class="text">Згорнути</span>
+          <span class="text">Розгорнути</span>
         </button>
       </div>
 
-      <div id="add-body-global" class="category-body mt-2">
+      <div id="add-body-global" class="category-body mt-2 collapsed">
         {% for a in addons_global %}
         <div class="input-group mb-2">
           <div class="input-group-text">
@@ -1205,46 +1569,139 @@ body.preview-only .order-sketch{
       </div>
     </div>
 
-    {# ===== Доповнення по категоріях ===== #}
+  </div>
+
+  <!-- Права колонка: Вікно → Фасад -->
+  <div class="addons-col d-flex flex-column gap-2">
+
+    {# ===== Вікно ===== #}
     {% for row in addons_by_category %}
       {% with cat=row.cat cat_adds=row.addons %}
-      <div class="category-card border rounded p-3">
-        <div class="category-header" data-target="add-body-{{ cat.id }}">
-          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-          <button type="button"
-                  class="category-toggle-btn btn btn-sm p-0"
-                  data-target="add-body-{{ cat.id }}">
-            <span class="icon">▾</span>
-            <span class="text">Згорнути</span>
-          </button>
-        </div>
-
-        <div id="add-body-{{ cat.id }}" class="category-body mt-2">
-          {% for a in cat_adds %}
-          <div class="input-group mb-2">
-            <div class="input-group-text">
-              <input type="checkbox"
-                     name="additions"
-                     value="{{ a.id }}"
-                     class="form-check-input mt-0">
-            </div>
-            <span class="input-group-text w-50">{{ a.name }}</span>
-            <input type="number"
-                   name="add_qty_{{ a.id }}"
-                   min="1"
-                   value="1"
-                   class="form-control">
-            <span class="input-group-text">{{ a.ks_value }} к/с</span>
+        {% if cat.name|lower == 'вікно' %}
+        <div class="category-card border rounded p-3">
+          <div class="category-header" data-target="add-body-{{ cat.id }}">
+            <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+            <button type="button"
+                    class="category-toggle-btn btn btn-sm p-0 collapsed"
+                    data-target="add-body-{{ cat.id }}">
+              <span class="icon">▾</span>
+              <span class="text">Розгорнути</span>
+            </button>
           </div>
-          {% empty %}
-            <div class="text-muted small">Немає доповнень</div>
-          {% endfor %}
+
+          <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+            {% for a in cat_adds %}
+            <div class="input-group mb-2">
+              <div class="input-group-text">
+                <input type="checkbox"
+                       name="additions"
+                       value="{{ a.id }}"
+                       class="form-check-input mt-0">
+              </div>
+              <span class="input-group-text w-50">{{ a.name }}</span>
+              <input type="number"
+                     name="add_qty_{{ a.id }}"
+                     min="1"
+                     value="1"
+                     class="form-control">
+              <span class="input-group-text">{{ a.ks_value }} к/с</span>
+            </div>
+            {% empty %}
+              <div class="text-muted small">Немає доповнень</div>
+            {% endfor %}
+          </div>
         </div>
-      </div>
+        {% endif %}
+      {% endwith %}
+    {% endfor %}
+
+    {# ===== Фасад ===== #}
+    {% for row in addons_by_category %}
+      {% with cat=row.cat cat_adds=row.addons %}
+        {% if cat.name|lower == 'фасад' %}
+        <div class="category-card border rounded p-3">
+          <div class="category-header" data-target="add-body-{{ cat.id }}">
+            <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+            <button type="button"
+                    class="category-toggle-btn btn btn-sm p-0 collapsed"
+                    data-target="add-body-{{ cat.id }}">
+              <span class="icon">▾</span>
+              <span class="text">Розгорнути</span>
+            </button>
+          </div>
+
+          <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+            {% for a in cat_adds %}
+            <div class="input-group mb-2">
+              <div class="input-group-text">
+                <input type="checkbox"
+                       name="additions"
+                       value="{{ a.id }}"
+                       class="form-check-input mt-0">
+              </div>
+              <span class="input-group-text w-50">{{ a.name }}</span>
+              <input type="number"
+                     name="add_qty_{{ a.id }}"
+                     min="1"
+                     value="1"
+                     class="form-control">
+              <span class="input-group-text">{{ a.ks_value }} к/с</span>
+            </div>
+            {% empty %}
+              <div class="text-muted small">Немає доповнень</div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
       {% endwith %}
     {% endfor %}
 
   </div>
+
+  {# ===== Інші категорії (якщо раптом є) — нижче на всю ширину ===== #}
+  <div class="addons-col d-flex flex-column gap-2" style="grid-column: 1 / -1;">
+    {% for row in addons_by_category %}
+      {% with cat=row.cat cat_adds=row.addons %}
+        {% if cat.name|lower != 'двері' and cat.name|lower != 'розсувна' and cat.name|lower != 'вікно' and cat.name|lower != 'фасад' %}
+        <div class="category-card border rounded p-3">
+          <div class="category-header" data-target="add-body-{{ cat.id }}">
+            <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+            <button type="button"
+                    class="category-toggle-btn btn btn-sm p-0 collapsed"
+                    data-target="add-body-{{ cat.id }}">
+              <span class="icon">▾</span>
+              <span class="text">Розгорнути</span>
+            </button>
+          </div>
+
+          <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+            {% for a in cat_adds %}
+            <div class="input-group mb-2">
+              <div class="input-group-text">
+                <input type="checkbox"
+                       name="additions"
+                       value="{{ a.id }}"
+                       class="form-check-input mt-0">
+              </div>
+              <span class="input-group-text w-50">{{ a.name }}</span>
+              <input type="number"
+                     name="add_qty_{{ a.id }}"
+                     min="1"
+                     value="1"
+                     class="form-control">
+              <span class="input-group-text">{{ a.ks_value }} к/с</span>
+            </div>
+            {% empty %}
+              <div class="text-muted small">Немає доповнень</div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      {% endwith %}
+    {% endfor %}
+  </div>
+
+</div>
 </div>
 
       <div class="text-center mb-4">
@@ -1617,6 +2074,76 @@ document.addEventListener("DOMContentLoaded", () => {
   const blockCat = document.getElementById("productsByCategories");
   const blockFlat= document.getElementById("productsFlatList");
 
+  // ===== LEFT PANEL TOGGLE + PDF PREVIEW (A4-fit) =====
+  const sketchHidePart = document.getElementById("sketchHidePart");
+  const pdfPreviewBox  = document.getElementById("pdfPreviewBox");
+  const pdfEmbed       = document.getElementById("pdfEmbed");
+  const closePreview   = document.getElementById("closePreview");
+
+  function setPreviewMode(on){
+    if (!sketchSection) return;
+    if (on){
+      document.body.classList.add("preview-only");
+      sketchSection.classList.add("preview-only");
+    } else {
+      document.body.classList.remove("preview-only");
+      sketchSection.classList.remove("preview-only");
+    }
+  }
+
+  // Manual collapse/restore (photos + file list)
+  if (toggleBtn && restoreBtn && sketchHidePart){
+    toggleBtn.addEventListener("click", () => {
+      sketchHidePart.style.display = "none";
+      toggleBtn.style.display = "none";
+      restoreBtn.style.display = "inline-block";
+      // keep preview visible if it was opened
+      if (pdfPreviewBox && pdfPreviewBox.style.display !== "none") {
+        setPreviewMode(true);
+      }
+    });
+
+    restoreBtn.addEventListener("click", () => {
+      sketchHidePart.style.display = "";
+      restoreBtn.style.display = "none";
+      toggleBtn.style.display = "inline-block";
+      // if preview opened - stay in preview mode but show photos/files again
+      if (pdfPreviewBox && pdfPreviewBox.style.display !== "none") {
+        setPreviewMode(false);
+      }
+    });
+  }
+
+  // Open inline preview (A4-like fit in built-in PDF viewer)
+  function buildPdfViewerUrl(rawUrl){
+    // Browser PDF viewers take zoom params via URL hash. We replace any existing hash to avoid conflicts.
+    const base = String(rawUrl || "").split("#")[0];
+    return base + "#view=FitH&zoom=page-fit";
+  }
+
+  document.querySelectorAll(".js-preview").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const url = btn.getAttribute("data-preview-url");
+      if (!url || !pdfPreviewBox || !pdfEmbed) return;
+
+      pdfEmbed.src = buildPdfViewerUrl(url);
+      pdfPreviewBox.style.display = "block";
+      setPreviewMode(true);
+
+      // Lift preview to the top of the page (under header)
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
+
+// Close preview
+  if (closePreview && pdfPreviewBox && pdfEmbed){
+    closePreview.addEventListener("click", () => {
+      pdfEmbed.src = "";
+      pdfPreviewBox.style.display = "none";
+      setPreviewMode(false);
+    });
+  }
+
   // Перемикання "по категоріях" / "плоский список"
   if (btnCat && btnFlat && blockFlat) {
     btnCat.addEventListener("click", () => {
@@ -1832,6 +2359,58 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   });
+
+// Init: доповнення сховані за замовчуванням; якщо є вибрані — відкриваємо їх секції
+(function initAddonsAccordions() {
+  // 1) на всяк випадок сховати всі доповнення
+  document.querySelectorAll('[id^="add-body-"].category-body').forEach(body => {
+    body.classList.add("collapsed");
+    const btn = document.querySelector(`.category-toggle-btn[data-target="${body.id}"]`);
+    if (btn) {
+      btn.classList.add("collapsed");
+      const t = btn.querySelector(".text");
+      if (t) t.textContent = "Розгорнути";
+    }
+  });
+
+  // 2) якщо в секції є вже вибрані доповнення — розгорнути її
+  document.querySelectorAll('input[name="additions"]:checked').forEach(chk => {
+    const card = chk.closest(".category-card");
+    const header = card?.querySelector(".category-header");
+    const targetId = header?.getAttribute("data-target");
+    const body = targetId ? document.getElementById(targetId) : null;
+    const btn = targetId ? document.querySelector(`.category-toggle-btn[data-target="${targetId}"]`) : null;
+
+    if (body) body.classList.remove("collapsed");
+    if (btn) {
+      btn.classList.remove("collapsed");
+      const t = btn.querySelector(".text");
+      if (t) t.textContent = "Згорнути";
+    }
+  });
+
+  // 3) при виборі доповнення — якщо секція схована, розгорнути її
+  document.addEventListener("change", (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement)) return;
+    if (el.name !== "additions") return;
+
+    const card = el.closest(".category-card");
+    const header = card?.querySelector(".category-header");
+    const targetId = header?.getAttribute("data-target");
+    const body = targetId ? document.getElementById(targetId) : null;
+    const btn = targetId ? document.querySelector(`.category-toggle-btn[data-target="${targetId}"]`) : null;
+
+    if (body?.classList.contains("collapsed")) {
+      body.classList.remove("collapsed");
+      if (btn) {
+        btn.classList.remove("collapsed");
+        const t = btn.querySelector(".text");
+        if (t) t.textContent = "Згорнути";
+      }
+    }
+  });
+})();
 
   // ---- Замовник: існуючий / новий + автозбереження ----
   const customerForm = document.getElementById("customerForm");
