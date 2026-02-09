@@ -1,3 +1,11 @@
+
+<style>
+/* move top navbars to the right half */
+nav.navbar{
+    width:50%;
+    margin-left:50%;
+}
+</style>
 {% extends 'base.html' %}
 {% block content %}
 <style>
@@ -1082,6 +1090,74 @@ header .navbar-toggler,
   .order-sketch{
     position: static !important;
     top: auto !important;
+  }
+}
+
+
+
+/* =========================
+   50/50 SPLIT LAYOUT (USER REQUEST)
+   Right side stays as-is (markup/HTML), only layout sizing changes.
+   Left side edited: no sticky, independent scroll, equal width.
+   ========================= */
+.order-layout{
+  display:flex;
+  flex-wrap:nowrap;
+  gap: 0 !important;              /* two equal halves, no gap */
+  height: calc(100vh - 0px);      /* if you have a fixed header, set value here */
+  min-height: calc(100vh - 0px);
+  overflow: hidden;               /* both panes scroll internally */
+}
+
+/* Left pane */
+#sketch-section,
+.order-sketch{
+  flex: 1 1 50% !important;
+  width: 50% !important;
+  max-width: 50% !important;
+  min-width: 0 !important;
+
+  position: relative !important;  /* disable sticky */
+  top: auto !important;
+  align-self: stretch !important;
+
+  height: 100% !important;
+  max-height: none !important;
+  overflow-y: auto !important;    /* scroll inside left */
+  overflow-x: hidden !important;
+
+  padding: 16px !important;
+  border-right: 1px solid rgba(13,110,253,0.12) !important;
+  background: transparent !important;
+}
+
+/* Right pane */
+.order-form{
+  flex: 1 1 50% !important;
+  width: 50% !important;
+  max-width: 50% !important;
+  min-width: 0 !important;        /* allow 50% even on smaller screens */
+  height: 100% !important;
+  overflow-y: auto !important;     /* keep as-is */
+}
+
+/* Mobile: keep stacked */
+@media (max-width: 991px){
+  .order-layout{
+    flex-direction: column !important;
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+  }
+  #sketch-section,
+  .order-sketch,
+  .order-form{
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    border-right: none !important;
   }
 }
 
