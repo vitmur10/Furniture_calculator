@@ -1146,34 +1146,14 @@ def generate_pdf(request, order_id):
         effective_ks_sum = Decimal("0")
         total_sum = Decimal("0")
 
-        _, order_markup = extract_markup_from_obj(order)
-
         idx = 1
         for it in internal_items:
-            parts = build_item_formula_parts(it)
-
-            item_has_markup, item_markup_val = extract_markup_from_obj(it)
-
-            # Якщо передали ?markup=... — він має пріоритет
-            # (і працює навіть якщо прийшло "10%")
-            if markup_override is not None:
-                m = markup_override
-            else:
-                # якщо в item реально є поле націнки — беремо item, інакше беремо order
-                m = item_markup_val if item_has_markup else order_markup
-
-            ks_eff = to_decimal(parts.get("ks_effective", 0), "0")
-            base_price = _q2(ks_eff * rate)
-            final_price = _q2(base_price * (Decimal("1") + (m / Decimal("100"))))
-
-            effective_ks_sum += ks_eff
-            total_sum += final_price
-
+            # --- назва + qty з БД ---
             name = safe_text(getattr(it, "name", ""))
             qty_item = to_decimal(getattr(it, "quantity", 1) or 1, "1")
-            if qty_item != qty_item.to_integral_value() or qty_item > 1:
-                name = f"{name} × {fmt_qty(qty_item)}"
 
+            # --- формула залишаємо для відображення (як і було) ---
+            parts = build_item_formula_parts(it)
             formula = safe_text(parts.get("ks_formula", ""))
             formula = (
                 formula
@@ -1183,13 +1163,30 @@ def generate_pdf(request, order_id):
                 .replace(" / ", " /\u200b")
             )
 
+            # --- К/С з БД (враховує qty, additions, coefficients) ---
+            ks_base, coef = it.total_ks()
+            ks_eff = _q2(Decimal(str(ks_base)) * Decimal(str(coef)))
+
+            # --- % націнки з БД (позиція або замовлення) ---
+            m = _q2(Decimal(str(it.effective_markup_percent() or 0)))
+
+            # --- фінальна ціна з БД (істина) ---
+            final_price = _q2(Decimal(str(it.total_cost() or 0)))
+
+            # --- базова ціна без націнки (дістаємо з фінальної) ---
+            denom = (Decimal("1") + (m / Decimal("100")))
+            base_price = _q2(final_price / denom) if denom != 0 else Decimal("0")
+
+            effective_ks_sum += ks_eff
+            total_sum += final_price
+
             data.append([
                 str(idx),
                 name[:45],
-                fmt_qty(to_decimal(parts.get("qty", qty_item), "1")),
+                fmt_qty(qty_item),
                 Paragraph(formula, formula_style),
                 f"{ks_eff:.2f}",
-                f"{_q2(m):.2f}",
+                f"{m:.2f}",
                 f"{base_price:.2f}",
                 f"{final_price:.2f}",
             ])
