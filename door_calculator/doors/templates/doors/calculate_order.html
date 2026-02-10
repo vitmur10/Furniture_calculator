@@ -1,10 +1,4 @@
 
-<style>
-/* move top navbars to the right half */
-nav.navbar{
-    width:50%;
-    margin-left:50%;
-}
 </style>
 {% extends 'base.html' %}
 {% block content %}
@@ -962,42 +956,6 @@ body.preview-only #sketchHidePart{
   padding-top: 0 !important;
 }
 
-/* Header: move EVERYTHING (logo + menu + buttons) fully to the right */
-header .navbar > .container-fluid,
-.navbar > .container-fluid{
-  justify-content: flex-end !important;
-}
-
-/* Push brand (logo/text) to the right side as well */
-header .navbar-brand,
-.navbar .navbar-brand{
-  margin-left: auto !important;
-  margin-right: 0 !important;
-  white-space: nowrap !important;
-}
-
-/* Don't let collapse/nav stretch full width */
-header .navbar-collapse,
-.navbar-collapse{
-  justify-content: flex-end !important;
-  flex-grow: 0 !important;
-}
-
-header .navbar-nav,
-.navbar .navbar-nav{
-  margin-left: 0 !important;
-  justify-content: flex-end !important;
-  width: auto !important;
-  flex-wrap: nowrap !important;
-  align-items: center !important;
-}
-
-/* Keep burger/button on the right too */
-header .navbar-toggler,
-.navbar .navbar-toggler{
-  order: 99;
-  margin-left: 10px;
-}
 
 /* Keep mobile behavior (stack) */
 @media (max-width: 991px){
@@ -2855,3 +2813,4 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 {% endblock %}
+
