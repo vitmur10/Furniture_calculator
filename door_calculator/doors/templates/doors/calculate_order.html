@@ -282,8 +282,9 @@
     color: #fff;
   }
 
-  #restoreSketch {
-    display: none;
+  /* Restore button has its own class to avoid inheriting absolute positioning from .toggle-btn */
+  .restore-btn{
+    display: none;              /* shown via JS as inline-flex */
     position: fixed;
     top: 80px;
     left: 20px;
@@ -295,9 +296,21 @@
     padding: 8px 14px;
     font-weight: 600;
     cursor: pointer;
+    width: auto !important;
+    max-width: fit-content;
     box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     transition: all 0.3s ease;
+    align-items: center;
+    gap: 6px;
   }
+  .restore-btn:hover { background: #0b5ed7; }
+
+
+  #restoreSketch {
+
+    width: auto !important;
+    max-width: fit-content;
+    display: none; /* shown via JS as inline-flex */}
   #restoreSketch:hover { background: #0b5ed7; }
 
   .order-form {
@@ -1130,7 +1143,7 @@ body.preview-only #sketchHidePart{
 
   <div class="d-flex align-items-center gap-2 mb-2">
     <button class="toggle-btn" id="toggleSketch" type="button">📉 Згорнути</button>
-    <button class="toggle-btn" id="restoreSketch" type="button" style="display:none;">📈 Показати</button>
+    <button class="restore-btn" id="restoreSketch" type="button" style="display:none;">📈 Показати</button>
   </div>
 
   {# ✅ ХОВАЄМО ТІЛЬКИ ЦЕ: фото # + # файли #}
@@ -2130,7 +2143,7 @@ document.addEventListener("DOMContentLoaded", () => {
     toggleBtn.addEventListener("click", () => {
       sketchHidePart.style.display = "none";
       toggleBtn.style.display = "none";
-      restoreBtn.style.display = "inline-block";
+      restoreBtn.style.display = "inline-flex";
       // keep preview visible if it was opened
       if (pdfPreviewBox && pdfPreviewBox.style.display !== "none") {
         setPreviewMode(true);
@@ -2140,7 +2153,7 @@ document.addEventListener("DOMContentLoaded", () => {
     restoreBtn.addEventListener("click", () => {
       sketchHidePart.style.display = "";
       restoreBtn.style.display = "none";
-      toggleBtn.style.display = "inline-block";
+      toggleBtn.style.display = "inline-flex";
       // if preview opened - stay in preview mode but show photos/files again
       if (pdfPreviewBox && pdfPreviewBox.style.display !== "none") {
         setPreviewMode(false);
@@ -2669,7 +2682,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (sketchSection) sketchSection.classList.add("preview-only");
     document.body.classList.add("preview-only");
     if (btnHide) btnHide.style.display = "none";
-    if (btnShow) btnShow.style.display = "inline-block";
+    if (btnShow) btnShow.style.display = "inline-flex";
   }
 
   function exitPreviewMode() {
@@ -2679,7 +2692,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (sketchSection) sketchSection.classList.remove("preview-only");
     document.body.classList.remove("preview-only");
     if (btnShow) btnShow.style.display = "none";
-    if (btnHide) btnHide.style.display = "inline-block";
+    if (btnHide) btnHide.style.display = "inline-flex";
   }
 
   // Делегування кліку (працює навіть якщо кнопки генеруються/оновлюються)
@@ -2787,7 +2800,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 3) Початковий стан
   btnShow.style.display = "none";
-  btnHide.style.display = "inline-block";
+  btnHide.style.display = "inline-flex";
 
   // 4) Нові (єдині) хендлери: ховаємо ТІЛЬКИ hidePart
   btnHide.addEventListener("click", (e) => {
@@ -2796,7 +2809,7 @@ document.addEventListener("DOMContentLoaded", () => {
     sketchSection.classList.add("preview-only");
     document.body.classList.add("preview-only");
     btnHide.style.display = "none";
-    btnShow.style.display = "inline-block";
+    btnShow.style.display = "inline-flex";
     if (previewBox && pdfEmbed && pdfEmbed.src) {
       previewBox.style.display = "block";
     }
@@ -2808,9 +2821,8 @@ document.addEventListener("DOMContentLoaded", () => {
     sketchSection.classList.remove("preview-only");
     document.body.classList.remove("preview-only");
     btnShow.style.display = "none";
-    btnHide.style.display = "inline-block";
+    btnHide.style.display = "inline-flex";
   });
 });
 </script>
 {% endblock %}
-
