@@ -1571,7 +1571,10 @@ def report_period_view(request):
     # ----- СПИСОК ЗАМОВЛЕНЬ (БЕЗ ДУБЛІВ) -----
     order_ids = progress_qs.values_list("order_id", flat=True).distinct()
     orders_qs = Order.objects.filter(id__in=order_ids).order_by("order_number")
-    orders = [o.order_number for o in orders_qs]
+    orders = [
+        {"number": o.order_number, "name": o.order_name}
+        for o in orders_qs
+    ]
 
     # ----- СПИСОК ПРАЦІВНИКІВ -----
     workers = list(
@@ -1596,8 +1599,7 @@ def report_period_view(request):
                 date__lte=current_date,
             ).order_by("-date")
             last = qs.first()
-            row[o_num] = float(last.percent) if last else 0.0
-
+            row[o_num["number"]] = float(last.percent) if last else 0.0
         # 🔹 Години по працівниках на цю дату
         for w in workers:
             hours = (
@@ -1624,7 +1626,7 @@ def report_period_view(request):
             date__lte=calc_date,
         ).order_by("-date")
         last = qs.first()
-        totals_orders[o_num] = float(last.percent) if last else 0.0
+        totals_orders[o_num["number"]] = float(last.percent) if last else 0.0
 
     # ===== НОРМА ГОДИН =====
     work_days = (end_date - start_date).days + 1

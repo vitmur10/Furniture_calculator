@@ -275,8 +275,8 @@ class Order(models.Model):
     total_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total_ks = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     completion_percent = models.PositiveIntegerField(default=0)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="in_progress")
-    status_finance = models.CharField(max_length=20, choices=STATUS_CHOICES_FINANCE, default="postponed")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="calculation")
+    status_finance = models.CharField(max_length=20, choices=STATUS_CHOICES_FINANCE, default="-----")
     sketch = models.ImageField(upload_to="sketches/", blank=True, null=True)
     source = models.CharField(
         "Джерело",

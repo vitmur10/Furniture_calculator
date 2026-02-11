@@ -45,8 +45,11 @@
           <th rowspan="2" class="align-middle">Σ год за день</th>
         </tr>
         <tr>
-          {% for o in orders %}
-            <th>№{{ o }}</th>
+          {% for o in orders%}
+            <th>
+              <div>№{{ o.number }}</div>
+              <div class="small text-muted">{{ o.name }}</div>
+            </th>
           {% endfor %}
           {% for w in workers %}
             <th>{{ w }}</th>
@@ -59,10 +62,10 @@
         <tr>
           <td class="fw-bold">{{ row.date|date:"d.m" }}</td>
 
-          {# замовлення: відсотки на цю дату #}
-          {% for o in orders %}
-            <td>{{ row|get_item:o|floatformat:1 }}</td>
-          {% endfor %}
+            {# замовлення: відсотки на цю дату #}
+           {% for o in orders %}
+            <td>{{ row|get_item:o.number|floatformat:1 }}</td>
+           {% endfor %}
 
           {# працівники: години #}
           {% for w in workers %}
@@ -77,12 +80,10 @@
         <tr class="table-secondary fw-bold">
           <td>Σ за період</td>
 
-          {# по замовленнях — останній % виконання #}
-          {% for o in orders %}
-            <td>
-              {{ totals_orders|get_item:o|floatformat:1 }}%
-            </td>
-          {% endfor %}
+            {# по замовленнях — останній % виконання #}
+            {% for o in orders %}
+              <td>{{ totals_orders|get_item:o.number|floatformat:1 }}%</td>
+            {% endfor %}
 
           {# по працівниках — сумарні години #}
           {% for w in workers %}

@@ -15,7 +15,7 @@
             {% for o in all_orders %}
               <option value="{{ o.id }}"
                       {% if selected_order and o.id == selected_order.id %}selected{% endif %}>
-                №{{ o.order_number }} від {{ o.created_at|date:"d.m.Y" }}
+                №{{ o.order_number }} {{selected_order.order_name }} від {{ o.created_at|date:"d.m.Y" }}
               </option>
             {% endfor %}
           </select>
@@ -32,6 +32,7 @@
         <div class="card-body">
           <h5 class="mb-3">
             Замовлення №{{ selected_order.order_number }}
+            назва {{selected_order.order_name }}
             від {{ selected_order.created_at|date:"d.m.Y" }}
           </h5>
 
@@ -99,6 +100,7 @@
     <thead class="table-primary">
       <tr>
         <th>Дата</th>
+        <th>№ Замовлення</th>
         <th>Замовлення</th>
         <th>Виконано (%)</th>
         <th>Проблемні позиції</th>
@@ -110,6 +112,7 @@
       <tr>
         <td>{{ p.date|date:"d.m.Y" }}</td>
         <td>№{{ p.order.order_number }}</td>
+        <td>{{ p.order.order_name }}</td>
         <td>{{ p.percent }}%</td>
         <td>
           {% with items=p.problem_items.all %}

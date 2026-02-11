@@ -19,17 +19,16 @@ urlpatterns = [
     path("order/item/<int:item_id>/edit/", views.order_item_edit, name="order_item_edit"),
     path("order/item/<int:item_id>/delete/", views.order_item_delete, name="order_item_delete"),
     path("order/<int:order_id>/delete/", views.delete_order, name="order_delete"),
-    path("order-image/<int:image_id>/annotate/",views.annotate_order_image,name="annotate_order_image"),
+    path("order-image/<int:image_id>/annotate/", views.annotate_order_image, name="annotate_order_image"),
     path("order-name/add/", views.add_order_name, name="add_order_name"),
     path("order-file/<int:file_id>/download/", views.order_file_download, name="order_file_download"),
     path("order-file/<int:file_id>/delete/", views.delete_order_file, name="delete_order_file"),
     path("m365/file/<int:file_id>/content/", views.m365_file_content, name="m365_file_content"),
     path("m365/file/<int:file_id>/thumb/", views.m365_file_thumb, name="m365_file_thumb"),
-        # Додати для фото:
+    # Додати для фото:
     path("m365/image/<int:image_id>/content/", views.m365_image_content, name="m365_image_content"),
     path("m365/image/<int:image_id>/thumb/", views.m365_image_thumb, name="m365_image_thumb"),
     path("m365/file/<int:file_id>/inline/", views.order_file_inline, name="order_file_inline"),
     path("orders/<int:order_id>/sync-internal-pdf/", views.sync_internal_pdf, name="sync_internal_pdf"),
 
 ]
-

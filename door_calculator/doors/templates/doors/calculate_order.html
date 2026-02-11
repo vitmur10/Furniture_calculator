@@ -282,9 +282,8 @@
     color: #fff;
   }
 
-  /* Restore button has its own class to avoid inheriting absolute positioning from .toggle-btn */
-  .restore-btn{
-    display: none;              /* shown via JS as inline-flex */
+  #restoreSketch {
+    display: none;
     position: fixed;
     top: 80px;
     left: 20px;
@@ -296,21 +295,9 @@
     padding: 8px 14px;
     font-weight: 600;
     cursor: pointer;
-    width: auto !important;
-    max-width: fit-content;
     box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     transition: all 0.3s ease;
-    align-items: center;
-    gap: 6px;
   }
-  .restore-btn:hover { background: #0b5ed7; }
-
-
-  #restoreSketch {
-
-    width: auto !important;
-    max-width: fit-content;
-    display: none; /* shown via JS as inline-flex */}
   #restoreSketch:hover { background: #0b5ed7; }
 
   .order-form {
@@ -334,7 +321,17 @@
   }
   .product-option:hover { background: rgba(13, 110, 253, 0.05); }
 
-  .product-option img {
+
+  /* ✅ Clickable rows for products/addons (toggle checkbox by clicking image/text) */
+  .product-option,
+  .addon-row{
+    cursor: pointer;
+  }
+  .product-option input[type="number"],
+  .addon-row input[type="number"]{
+    cursor: text;
+  }
+.product-option img {
     width: 45px;
     height: 45px;
     object-fit: cover;
@@ -1143,7 +1140,7 @@ body.preview-only #sketchHidePart{
 
   <div class="d-flex align-items-center gap-2 mb-2">
     <button class="toggle-btn" id="toggleSketch" type="button">📉 Згорнути</button>
-    <button class="restore-btn" id="restoreSketch" type="button" style="display:none;">📈 Показати</button>
+    <button class="toggle-btn" id="restoreSketch" type="button" style="display:none;">📈 Показати</button>
   </div>
 
   {# ✅ ХОВАЄМО ТІЛЬКИ ЦЕ: фото # + # файли #}
@@ -1407,54 +1404,200 @@ body.preview-only #sketchHidePart{
           </div>
         </div>
 
-      {% if categories %}
-      <div class="mb-3" id="productsByCategories"  class="products-columns" style="display:none;">
-        <label class="form-label fw-bold">Оберіть вироби (по категоріях):</label>
-        {% for cat in categories %}
-          <div class="category-card border rounded p-3 mb-3">
-            <div class="category-header"
-                 data-target="cat-body-{{ cat.id }}">
-              <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-              <button type="button"
-                      class="category-toggle-btn btn btn-sm p-0"
-                      data-target="cat-body-{{ cat.id }}">
-                <span class="icon">▾</span>
-                <span class="text">Згорнути</span>
-              </button>
+{% if categories %}
+<div class="mb-3 products-columns" id="productsByCategories" style="display:none;">
+  <label class="form-label fw-bold">Оберіть вироби (по категоріях):</label>
+
+  {# ====== 1) Двері ====== #}
+  {% for cat in categories %}
+    {% if cat.name|lower == 'двері' %}
+      <div class="category-card border rounded p-3 mb-3">
+        <div class="category-header" data-target="cat-body-{{ cat.id }}">
+          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+          <button type="button"
+                  class="category-toggle-btn btn btn-sm p-0 collapsed"
+                  data-target="cat-body-{{ cat.id }}">
+            <span class="icon">▾</span>
+            <span class="text">Розгорнути</span>
+          </button>
+        </div>
+
+        <div id="cat-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+          {% for p in cat.products.all %}
+            <div class="product-option d-flex align-items-center gap-2">
+              <input type="checkbox"
+                     name="products"
+                     value="{{ p.id }}"
+                     class="form-check-input product-check"
+                     data-category="{{ cat.name }}"
+                     data-prod-id="{{ p.id }}">
+
+              {% if p.image %}
+                <img src="{{ p.image.url }}" alt="{{ p.name }}">
+              {% else %}
+                <img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">
+              {% endif %}
+
+              <label class="flex-grow-1 mb-0">{{ p.name }} ({{ p.base_ks }} к/с)</label>
+
+              <input type="number"
+                     min="1"
+                     value="1"
+                     class="form-control form-control-sm prod-qty"
+                     style="width: 90px;"
+                     name="prod_qty_{{ p.id }}">
             </div>
-
-            <div id="cat-body-{{ cat.id }}" class="category-body mt-2">
-              {% for p in cat.products.all %}
-                <div class="product-option d-flex align-items-center gap-2">
-                    <input type="checkbox"
-                           name="products"
-                           value="{{ p.id }}"
-                           class="form-check-input product-check"
-                           data-category="{{ cat.name }}"
-                           data-prod-id="{{ p.id }}">
-
-                    {% if p.image %}
-                      <img src="{{ p.image.url }}" alt="{{ p.name }}">
-                    {% else %}
-                      <img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">
-                    {% endif %}
-
-                    <label class="flex-grow-1 mb-0">{{ p.name }} ({{ p.base_ks }} к/с)</label>
-
-                    <input type="number"
-                           min="1"
-                           value="1"
-                           class="form-control form-control-sm prod-qty"
-                           style="width: 90px;"
-                           name="prod_qty_{{ p.id }}">
-                  </div>
-              {% endfor %}
-            </div>
-          </div>
-        {% endfor %}
+          {% endfor %}
+        </div>
       </div>
-      {% endif %}
+    {% endif %}
+  {% endfor %}
 
+  {# ====== 2) Розсувна ====== #}
+  {% for cat in categories %}
+    {% if cat.name|lower == 'розсувна' %}
+      <div class="category-card border rounded p-3 mb-3">
+        <div class="category-header" data-target="cat-body-{{ cat.id }}">
+          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+          <button type="button"
+                  class="category-toggle-btn btn btn-sm p-0 collapsed"
+                  data-target="cat-body-{{ cat.id }}">
+            <span class="icon">▾</span>
+            <span class="text">Розгорнути</span>
+          </button>
+        </div>
+
+        <div id="cat-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+          {% for p in cat.products.all %}
+            <div class="product-option d-flex align-items-center gap-2">
+              <input type="checkbox" name="products" value="{{ p.id }}"
+                     class="form-check-input product-check"
+                     data-category="{{ cat.name }}" data-prod-id="{{ p.id }}">
+
+              {% if p.image %}<img src="{{ p.image.url }}" alt="{{ p.name }}">
+              {% else %}<img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">{% endif %}
+
+              <label class="flex-grow-1 mb-0">{{ p.name }} ({{ p.base_ks }} к/с)</label>
+
+              <input type="number" min="1" value="1"
+                     class="form-control form-control-sm prod-qty" style="width: 90px;"
+                     name="prod_qty_{{ p.id }}">
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  {% endfor %}
+
+  {# ====== 3) Вікно ====== #}
+  {% for cat in categories %}
+    {% if cat.name|lower == 'вікно' %}
+      <div class="category-card border rounded p-3 mb-3">
+        <div class="category-header" data-target="cat-body-{{ cat.id }}">
+          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+          <button type="button"
+                  class="category-toggle-btn btn btn-sm p-0 collapsed"
+                  data-target="cat-body-{{ cat.id }}">
+            <span class="icon">▾</span>
+            <span class="text">Розгорнути</span>
+          </button>
+        </div>
+
+        <div id="cat-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+          {% for p in cat.products.all %}
+            <div class="product-option d-flex align-items-center gap-2">
+              <input type="checkbox" name="products" value="{{ p.id }}"
+                     class="form-check-input product-check"
+                     data-category="{{ cat.name }}" data-prod-id="{{ p.id }}">
+
+              {% if p.image %}<img src="{{ p.image.url }}" alt="{{ p.name }}">
+              {% else %}<img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">{% endif %}
+
+              <label class="flex-grow-1 mb-0">{{ p.name }} ({{ p.base_ks }} к/с)</label>
+
+              <input type="number" min="1" value="1"
+                     class="form-control form-control-sm prod-qty" style="width: 90px;"
+                     name="prod_qty_{{ p.id }}">
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  {% endfor %}
+
+  {# ====== 4) Фасад ====== #}
+  {% for cat in categories %}
+    {% if cat.name|lower == 'фасад' %}
+      <div class="category-card border rounded p-3 mb-3">
+        <div class="category-header" data-target="cat-body-{{ cat.id }}">
+          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+          <button type="button"
+                  class="category-toggle-btn btn btn-sm p-0 collapsed"
+                  data-target="cat-body-{{ cat.id }}">
+            <span class="icon">▾</span>
+            <span class="text">Розгорнути</span>
+          </button>
+        </div>
+
+        <div id="cat-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+          {% for p in cat.products.all %}
+            <div class="product-option d-flex align-items-center gap-2">
+              <input type="checkbox" name="products" value="{{ p.id }}"
+                     class="form-check-input product-check"
+                     data-category="{{ cat.name }}" data-prod-id="{{ p.id }}">
+
+              {% if p.image %}<img src="{{ p.image.url }}" alt="{{ p.name }}">
+              {% else %}<img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">{% endif %}
+
+              <label class="flex-grow-1 mb-0">{{ p.name }} ({{ p.base_ks }} к/с)</label>
+
+              <input type="number" min="1" value="1"
+                     class="form-control form-control-sm prod-qty" style="width: 90px;"
+                     name="prod_qty_{{ p.id }}">
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  {% endfor %}
+
+  {# ====== 5) Інші (в кінці) ====== #}
+  {% for cat in categories %}
+    {% if cat.name|lower != 'двері' and cat.name|lower != 'розсувна' and cat.name|lower != 'вікно' and cat.name|lower != 'фасад' %}
+      <div class="category-card border rounded p-3 mb-3">
+        <div class="category-header" data-target="cat-body-{{ cat.id }}">
+          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+          <button type="button"
+                  class="category-toggle-btn btn btn-sm p-0 collapsed"
+                  data-target="cat-body-{{ cat.id }}">
+            <span class="icon">▾</span>
+            <span class="text">Розгорнути</span>
+          </button>
+        </div>
+
+        <div id="cat-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+          {% for p in cat.products.all %}
+            <div class="product-option d-flex align-items-center gap-2">
+              <input type="checkbox" name="products" value="{{ p.id }}"
+                     class="form-check-input product-check"
+                     data-category="{{ cat.name }}" data-prod-id="{{ p.id }}">
+
+              {% if p.image %}<img src="{{ p.image.url }}" alt="{{ p.name }}">
+              {% else %}<img src="https://via.placeholder.com/50x50?text=No+Img" alt="{{ p.name }}">{% endif %}
+
+              <label class="flex-grow-1 mb-0">{{ p.name }} ({{ p.base_ks }} к/с)</label>
+
+              <input type="number" min="1" value="1"
+                     class="form-control form-control-sm prod-qty" style="width: 90px;"
+                     name="prod_qty_{{ p.id }}">
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
       <div id="productsFlatList" class="products-columns">
         <label class="form-label fw-bold">Оберіть вироби:</label>
         {% for p in products %}
@@ -1516,7 +1659,7 @@ body.preview-only #sketchHidePart{
 
           <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
             {% for a in cat_adds %}
-            <div class="input-group mb-2">
+            <div class="input-group mb-2 addon-row">
               <div class="input-group-text">
                 <input type="checkbox"
                        name="additions"
@@ -1557,7 +1700,7 @@ body.preview-only #sketchHidePart{
 
           <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
             {% for a in cat_adds %}
-            <div class="input-group mb-2">
+            <div class="input-group mb-2 addon-row">
               <div class="input-group-text">
                 <input type="checkbox"
                        name="additions"
@@ -1595,7 +1738,7 @@ body.preview-only #sketchHidePart{
 
       <div id="add-body-global" class="category-body mt-2 collapsed">
         {% for a in addons_global %}
-        <div class="input-group mb-2">
+        <div class="input-group mb-2 addon-row">
           <div class="input-group-text">
             <input type="checkbox"
                    name="additions"
@@ -1638,7 +1781,7 @@ body.preview-only #sketchHidePart{
 
           <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
             {% for a in cat_adds %}
-            <div class="input-group mb-2">
+            <div class="input-group mb-2 addon-row">
               <div class="input-group-text">
                 <input type="checkbox"
                        name="additions"
@@ -1679,7 +1822,7 @@ body.preview-only #sketchHidePart{
 
           <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
             {% for a in cat_adds %}
-            <div class="input-group mb-2">
+            <div class="input-group mb-2 addon-row">
               <div class="input-group-text">
                 <input type="checkbox"
                        name="additions"
@@ -1723,7 +1866,7 @@ body.preview-only #sketchHidePart{
 
           <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
             {% for a in cat_adds %}
-            <div class="input-group mb-2">
+            <div class="input-group mb-2 addon-row">
               <div class="input-group-text">
                 <input type="checkbox"
                        name="additions"
@@ -2143,7 +2286,7 @@ document.addEventListener("DOMContentLoaded", () => {
     toggleBtn.addEventListener("click", () => {
       sketchHidePart.style.display = "none";
       toggleBtn.style.display = "none";
-      restoreBtn.style.display = "inline-flex";
+      restoreBtn.style.display = "inline-block";
       // keep preview visible if it was opened
       if (pdfPreviewBox && pdfPreviewBox.style.display !== "none") {
         setPreviewMode(true);
@@ -2153,7 +2296,7 @@ document.addEventListener("DOMContentLoaded", () => {
     restoreBtn.addEventListener("click", () => {
       sketchHidePart.style.display = "";
       restoreBtn.style.display = "none";
-      toggleBtn.style.display = "inline-flex";
+      toggleBtn.style.display = "inline-block";
       // if preview opened - stay in preview mode but show photos/files again
       if (pdfPreviewBox && pdfPreviewBox.style.display !== "none") {
         setPreviewMode(false);
@@ -2682,7 +2825,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (sketchSection) sketchSection.classList.add("preview-only");
     document.body.classList.add("preview-only");
     if (btnHide) btnHide.style.display = "none";
-    if (btnShow) btnShow.style.display = "inline-flex";
+    if (btnShow) btnShow.style.display = "inline-block";
   }
 
   function exitPreviewMode() {
@@ -2692,7 +2835,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (sketchSection) sketchSection.classList.remove("preview-only");
     document.body.classList.remove("preview-only");
     if (btnShow) btnShow.style.display = "none";
-    if (btnHide) btnHide.style.display = "inline-flex";
+    if (btnHide) btnHide.style.display = "inline-block";
   }
 
   // Делегування кліку (працює навіть якщо кнопки генеруються/оновлюються)
@@ -2800,7 +2943,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 3) Початковий стан
   btnShow.style.display = "none";
-  btnHide.style.display = "inline-flex";
+  btnHide.style.display = "inline-block";
 
   // 4) Нові (єдині) хендлери: ховаємо ТІЛЬКИ hidePart
   btnHide.addEventListener("click", (e) => {
@@ -2809,7 +2952,7 @@ document.addEventListener("DOMContentLoaded", () => {
     sketchSection.classList.add("preview-only");
     document.body.classList.add("preview-only");
     btnHide.style.display = "none";
-    btnShow.style.display = "inline-flex";
+    btnShow.style.display = "inline-block";
     if (previewBox && pdfEmbed && pdfEmbed.src) {
       previewBox.style.display = "block";
     }
@@ -2821,8 +2964,49 @@ document.addEventListener("DOMContentLoaded", () => {
     sketchSection.classList.remove("preview-only");
     document.body.classList.remove("preview-only");
     btnShow.style.display = "none";
-    btnHide.style.display = "inline-flex";
+    btnHide.style.display = "inline-block";
   });
 });
 </script>
+
+<script>
+/* ================================
+   CLICK ON ROW = TOGGLE CHECKBOX
+   Works for:
+   - products (flat list + by categories)
+   - additions (addons), including grouped categories
+   ================================ */
+document.addEventListener("click", function(e){
+
+  /* ---------- PRODUCTS ---------- */
+  const productRow = e.target.closest(".product-option");
+  if (productRow) {
+    // don't toggle when interacting with qty input or checkbox itself
+    if (e.target.closest('input[type="number"]')) return;
+    if (e.target.matches('input[type="checkbox"]')) return;
+
+    const cb = productRow.querySelector(".product-check");
+    if (!cb) return;
+
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+
+  /* ---------- ADDONS ---------- */
+  const addonRow = e.target.closest(".addon-row");
+  if (addonRow) {
+    if (e.target.closest('input[type="number"]')) return;
+    if (e.target.matches('input[type="checkbox"]')) return;
+
+    const cb = addonRow.querySelector('input[type="checkbox"][name="additions"]');
+    if (!cb) return;
+
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+});
+</script>
+
 {% endblock %}
+
