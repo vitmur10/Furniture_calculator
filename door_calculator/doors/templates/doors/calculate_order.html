@@ -1608,7 +1608,6 @@ body.preview-only #sketchHidePart{
                    class="form-check-input product-check"
                    data-category="{{ p.category.name }}"
                    data-prod-id="{{ p.id }}">
-
             {% if p.image %}
               <img src="{{ p.image.url }}" alt="{{ p.name }}">
             {% else %}
@@ -1974,7 +1973,8 @@ body.preview-only #sketchHidePart{
       </div>
     </form>
   </div>
-</div>    {% if items %}
+</div>
+    {% if items %}
       <div class="summary-table">
         <table class="table table-bordered text-center align-middle mb-0">
             <thead>
@@ -1985,9 +1985,9 @@ body.preview-only #sketchHidePart{
                 <th>К/С (розрахунок)</th>
                 <th>Ціна</th>
                 <th>Дія</th>
-                <th>Націнка %</th>
+                <th style="width:110px;">ТН %</th>
                 <th style="width:40px;">
-                      <input id="selectAllItems" type="checkbox" class="form-check-input">
+                  <input id="selectAllItems" type="checkbox" class="form-check-input">
                 </th>
               </tr>
             </thead>
@@ -2037,11 +2037,13 @@ body.preview-only #sketchHidePart{
                        ✏️
                     </a>
                   </td>
-                    <td style="min-width:140px;">
-                        <input type="number" step="0.01"
-                               name="item_markup_{{ i.id }}"
-                               value="{{ i.markup_percent|default_if_none:'' }}"
-                               form="saveMarkupForm">
+                    <td style="width:110px;">
+                      <input type="number" step="0.01"
+                             class="form-control form-control-sm"
+                             style="width:90px; margin:0 auto;"
+                             name="item_markup_{{ i.id }}"
+                             value="{{ i.markup_percent|default_if_none:'' }}"
+                             form="saveMarkupForm">
                       <div class="small text-muted">
                         зараз: {{ i.effective_markup_percent|default:"" }}
                       </div>

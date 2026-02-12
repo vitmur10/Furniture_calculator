@@ -1128,7 +1128,7 @@ def generate_pdf(request, order_id):
 
         data = [[
             "№", "Позиція", "Qty", "Формула", "К/С",
-            "Нац,%", "Без націнки", "Ціна з націнкою"
+            "ТН%", "Без ТН", "Ціна з ТН", "ТН"
         ]]
 
         # ✅ Стиль для переносу формули
@@ -1179,7 +1179,7 @@ def generate_pdf(request, order_id):
 
             effective_ks_sum += ks_eff
             total_sum += final_price
-
+            mark_up = final_price-base_price
             data.append([
                 str(idx),
                 name[:45],
@@ -1189,10 +1189,11 @@ def generate_pdf(request, order_id):
                 f"{m:.2f}",
                 f"{base_price:.2f}",
                 f"{final_price:.2f}",
+                f"{mark_up}"
             ])
             idx += 1
 
-        col_widths = [20, 120, 35, 150, 35, 30, 70, 70]
+        col_widths = [20, 80, 35, 140, 35, 30, 70, 70, 70]
         tbl = Table(data, colWidths=col_widths)
         tbl.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
