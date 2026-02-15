@@ -572,7 +572,19 @@ class WorkLog(models.Model):
     worker = models.ForeignKey(Worker, on_delete=models.CASCADE)
     order = models.ForeignKey("Order", on_delete=models.CASCADE, null=True, blank=True)
     date = models.DateField()
+
+    # Було: hours (залишаємо як є)
     hours = models.DecimalField(max_digits=5, decimal_places=2)
+
+    # НОВЕ: "год роботи" (поки ні на що не впливає)
+    work_hours = models.DecimalField(
+        "Год роботи",
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
     comment = models.TextField(blank=True, null=True)
 
     def __str__(self):
@@ -582,7 +594,6 @@ class WorkLog(models.Model):
         verbose_name = "Журнал робіт"
         verbose_name_plural = "Журнали робіт"
         ordering = ["-date"]
-
 
 class ItemProgress(models.Model):
     order_item = models.ForeignKey(OrderItem, on_delete=models.CASCADE, related_name="progress_history")

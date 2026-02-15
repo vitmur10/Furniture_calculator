@@ -16,20 +16,20 @@
         <label class="form-label fw-bold">По дату</label>
         <input type="date" name="end_date" class="form-control" value="{{ end_date|date:'Y-m-d' }}">
       </div>
-    <div class="col-md-4 text-end mt-3 d-flex justify-content-end gap-2">
-      <button type="submit" class="btn btn-primary px-4">
-        🔍 Показати
-      </button>
-
-      {% if table %}
-        <button type="submit"
-                name="export"
-                value="pdf"
-                class="btn btn-outline-secondary px-4">
-          ⬇️ PDF
+      <div class="col-md-4 text-end mt-3 d-flex justify-content-end gap-2">
+        <button type="submit" class="btn btn-primary px-4">
+          🔍 Показати
         </button>
-      {% endif %}
-    </div>
+
+        {% if table %}
+          <button type="submit"
+                  name="export"
+                  value="pdf"
+                  class="btn btn-outline-secondary px-4">
+            ⬇️ PDF
+          </button>
+        {% endif %}
+      </div>
     </div>
   </form>
 
@@ -45,14 +45,16 @@
           <th rowspan="2" class="align-middle">Σ год за день</th>
         </tr>
         <tr>
-          {% for o in orders%}
+          {% for o in orders %}
             <th>
               <div>№{{ o.number }}</div>
               <div class="small text-muted">{{ o.name }}</div>
             </th>
           {% endfor %}
+
+          {# ✅ Тепер workers = [{"id":..., "name":...}] #}
           {% for w in workers %}
-            <th>{{ w }}</th>
+            <th>{{ w.name }}</th>
           {% endfor %}
         </tr>
       </thead>
@@ -62,14 +64,14 @@
         <tr>
           <td class="fw-bold">{{ row.date|date:"d.m" }}</td>
 
-            {# замовлення: відсотки на цю дату #}
-           {% for o in orders %}
+          {# замовлення: % на цю дату #}
+          {% for o in orders %}
             <td>{{ row|get_item:o.number|floatformat:1 }}</td>
-           {% endfor %}
+          {% endfor %}
 
-          {# працівники: години #}
+          {# ✅ працівники: години по worker_id #}
           {% for w in workers %}
-            <td>{{ row|get_item:w|floatformat:1 }}</td>
+            <td>{{ row|get_item:w.id|floatformat:1 }}</td>
           {% endfor %}
 
           <td class="fw-bold bg-light">{{ row.total|floatformat:1 }}</td>
@@ -80,15 +82,16 @@
         <tr class="table-secondary fw-bold">
           <td>Σ за період</td>
 
-            {# по замовленнях — останній % виконання #}
-            {% for o in orders %}
-              <td>{{ totals_orders|get_item:o.number|floatformat:1 }}%</td>
-            {% endfor %}
-
-          {# по працівниках — сумарні години #}
-          {% for w in workers %}
-            <td>{{ totals_workers|get_item:w|floatformat:1 }}</td>
+          {# по замовленнях — останній % виконання #}
+          {% for o in orders %}
+            <td>{{ totals_orders|get_item:o.number|floatformat:1 }}%</td>
           {% endfor %}
+
+          {# ✅ по працівниках — сумарні години по worker_id #}
+          {% for w in workers %}
+            <td>{{ totals_workers|get_item:w.id|floatformat:1 }}</td>
+          {% endfor %}
+
           <td>{{ total_all|floatformat:1 }}</td>
         </tr>
       </tbody>

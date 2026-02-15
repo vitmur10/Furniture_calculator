@@ -34,7 +34,7 @@
     </div>
   </form>
 
-  <!-- Таблиця робочих годин -->
+  <!-- Таблиця -->
   <div class="table-responsive">
     <table class="table table-bordered table-hover align-middle">
       <thead class="table-primary">
@@ -43,6 +43,7 @@
           <th>Працівник</th>
           <th>Посада</th>
           <th>Годин</th>
+          <th>ХОЗ години</th>  <!-- НОВЕ -->
           <th>Коментар</th>
         </tr>
       </thead>
@@ -53,6 +54,16 @@
           <td>{{ log.worker.name }}</td>
           <td>{{ log.worker.position|default:"—" }}</td>
           <td>{{ log.hours|floatformat:2 }}</td>
+
+          <!-- НОВЕ -->
+          <td>
+            {% if log.work_hours %}
+              {{ log.work_hours|floatformat:2 }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+
           <td>{{ log.comment|default:"—" }}</td>
         </tr>
         {% empty %}
@@ -75,6 +86,7 @@
             <th>Працівник</th>
             <th>Посада</th>
             <th>Всього годин</th>
+            <th>ХОЗ години</th>  <!-- НОВЕ -->
           </tr>
         </thead>
         <tbody>
@@ -83,6 +95,12 @@
             <td>{{ t.worker__name }}</td>
             <td>{{ t.worker__position|default:"—" }}</td>
             <td class="fw-bold">{{ t.total_hours|floatformat:2 }}</td>
+
+            <!-- НОВЕ -->
+            <td class="fw-bold">
+              {{ t.work_hours|default:0|floatformat:2 }}
+            </td>
+
           </tr>
           {% endfor %}
         </tbody>

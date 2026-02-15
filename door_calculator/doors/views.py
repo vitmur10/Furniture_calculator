@@ -463,12 +463,60 @@ def calculate_order(request, order_id):
         name = request.POST.get("name") or "Позиція"
         item_qty = _to_decimal_or_one(request.POST.get("item_qty", 1))
 
+        calc_mode = (request.POST.get("calc_mode") or "products").strip().lower()
+        facade_total_cost = _to_decimal_or_none(request.POST.get("facade_total_cost"))
+
         selected_products = request.POST.getlist("products")
         selected_adds = request.POST.getlist("additions")
         selected_coefs = request.POST.getlist("coefficients")
 
+        # --- Create item (position) ---
         item = OrderItem.objects.create(order=order, name=name, quantity=item_qty)
 
+        # ============================================================
+        # FACADE MODE: do NOT save facade as product data; just add as a line item
+        # We represent the facade cost as KS via a single generic product with base_ks = 1,
+        # and quantity = needed KS. This avoids editing/overwriting product prices.
+        # ============================================================
+        if calc_mode == "facade":
+            if facade_total_cost is None or facade_total_cost <= 0:
+                item.delete()
+                messages.error(request, "Не вдалося додати фасад: сума фасаду порожня або 0. Перерахуй фасад і спробуй ще раз.")
+                return redirect("calculate_order", order_id=order.id)
+
+            if price_per_ks <= 0:
+                item.delete()
+                messages.error(request, "Не вдалося додати фасад: не заданий курс (ціна за кс).")
+                return redirect("calculate_order", order_id=order.id)
+
+            # Convert money -> KS so the existing pipeline (markups, totals, PDF) works unchanged.
+            facade_ks_qty = (facade_total_cost / price_per_ks)
+            # keep some precision, but avoid crazy long decimals
+            facade_ks_qty = _q2(facade_ks_qty) if facade_ks_qty > 0 else Decimal("0")
+
+            # Find or create a single generic product used only as a carrier of KS amount.
+            # It is created once; we never update its base_ks.
+            cat = Category.objects.filter(name__iexact="інше").first() or Category.objects.first()
+            facade_product, _created = Product.objects.get_or_create(
+                name="Фасад (розрахунок)",
+                defaults={"base_ks": Decimal("1"), "category": cat} if cat else {"base_ks": Decimal("1")},
+            )
+
+            # Safety: if base_ks is empty/0, set it once to 1 (carrier), but don't overwrite normal products.
+            if not facade_product.base_ks or Decimal(str(facade_product.base_ks)) == 0:
+                facade_product.base_ks = Decimal("1")
+                facade_product.save(update_fields=["base_ks"])
+
+            OrderItemProduct.objects.create(order_item=item, product=facade_product, quantity=facade_ks_qty)
+
+            # No additions/coefficients from "products" block in facade mode (all included in facade_total_cost).
+            _recalc_order_totals(order)
+            order.refresh_from_db()
+            return redirect("calculate_order", order_id=order.id)
+
+        # ============================================================
+        # PRODUCTS MODE (default): existing behavior
+        # ============================================================
         if selected_products:
             for pid in selected_products:
                 qty_field = f"prod_qty_{pid}"
@@ -486,6 +534,7 @@ def calculate_order(request, order_id):
         _recalc_order_totals(order)
         order.refresh_from_db()
         return redirect("calculate_order", order_id=order.id)
+
 
     # ============================================================
     # GET: prepare
@@ -1552,8 +1601,14 @@ def report_period_view(request):
         end_date = datetime.today().date()
         start_date = end_date - timedelta(days=7)
     else:
-        start_date = datetime.strptime(start_date_raw, "%Y-%m-%d").date()
-        end_date = datetime.strptime(end_date_raw, "%Y-%m-%d").date()
+        try:
+            start_date = datetime.strptime(start_date_raw, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end_date_raw, "%Y-%m-%d").date()
+        except ValueError:
+            return HttpResponseBadRequest("Некоректні дати")
+
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
 
     # Години працівників
     logs = (
@@ -1572,62 +1627,69 @@ def report_period_view(request):
     # ----- СПИСОК ЗАМОВЛЕНЬ (БЕЗ ДУБЛІВ) -----
     order_ids = progress_qs.values_list("order_id", flat=True).distinct()
     orders_qs = Order.objects.filter(id__in=order_ids).order_by("order_number")
-    orders = [
-        {"number": o.order_number, "name": o.order_name}
-        for o in orders_qs
-    ]
 
-    # ----- СПИСОК ПРАЦІВНИКІВ -----
+    # зберігаємо як список dict з ключем number
+    orders = [{"number": o.order_number, "name": o.order_name} for o in orders_qs]
+
+    # ----- СПИСОК ПРАЦІВНИКІВ (ID + name) -----
     workers = list(
-        logs
-        .values_list("worker__name", flat=True)
-        .distinct()
+        logs.order_by("worker__name")
+            .values("worker_id", "worker__name")
+            .distinct()
     )
+    # Нормалізуємо формат під шаблон
+    workers = [{"id": w["worker_id"], "name": w["worker__name"]} for w in workers]
+
+    # ===== ПІДГОТОВКА МАПИ ГОДИН (ОДИН ЗАПИТ) =====
+    # (date, worker_id) -> total hours
+    hours_map = {
+        (x["date"], x["worker_id"]): Decimal(str(x["total"] or 0))
+        for x in logs.values("date", "worker_id").annotate(total=Sum("hours"))
+    }
 
     # ===== ТАБЛИЦЯ ПО ДНЯХ =====
     table = []
-    totals_workers = {w: Decimal("0") for w in workers}
+    totals_workers = {w["id"]: Decimal("0") for w in workers}
     total_all = Decimal("0")
 
     current_date = start_date
     while current_date <= end_date:
         row = {"date": current_date, "total": Decimal("0")}
 
-        # 🔹 % виконання по КОЖНОМУ ЗАМОВЛЕННЮ станом на current_date
-        for o_num in orders:
-            qs = OrderProgress.objects.filter(
-                order__order_number=o_num,
-                date__lte=current_date,
-            ).order_by("-date")
-            last = qs.first()
-            row[o_num["number"]] = float(last.percent) if last else 0.0
-        # 🔹 Години по працівниках на цю дату
-        for w in workers:
-            hours = (
-                    logs
-                    .filter(worker__name=w, date=current_date)
-                    .aggregate(total=Sum("hours"))["total"]
-                    or Decimal("0")
+        # % виконання по кожному замовленню станом на current_date
+        # (оптимізація: мінімально правимо, лишаємо як у тебе - але виправляємо ключі)
+        for o in orders:
+            qs = (
+                OrderProgress.objects
+                .filter(order__order_number=o["number"], date__lte=current_date)
+                .order_by("-date")
             )
-            hours = Decimal(str(hours))
-            row[w] = hours
-            totals_workers[w] += hours
-            row["total"] += hours
+            last = qs.first()
+            row[o["number"]] = float(last.percent) if last else 0.0
+
+        # години по працівниках на current_date (без додаткових запитів)
+        for w in workers:
+            wid = w["id"]
+            h = hours_map.get((current_date, wid), Decimal("0"))
+            row[wid] = h
+            totals_workers[wid] += h
+            row["total"] += h
 
         total_all += row["total"]
         table.append(row)
         current_date += timedelta(days=1)
 
-    # ===== ПІДСУМКОВИЙ % ПО ЗАМОВЛЕННЯХ ЗА ПЕРІОД =====
+    # ===== ПІДСУМКОВИЙ % ПО ЗАМОВЛЕННЯХ ЗА ПЕРІОД (на end_date) =====
     calc_date = end_date or date.today()
     totals_orders = {}
-    for o_num in orders:
-        qs = OrderProgress.objects.filter(
-            order__order_number=o_num,
-            date__lte=calc_date,
-        ).order_by("-date")
+    for o in orders:
+        qs = (
+            OrderProgress.objects
+            .filter(order__order_number=o["number"], date__lte=calc_date)
+            .order_by("-date")
+        )
         last = qs.first()
-        totals_orders[o_num["number"]] = float(last.percent) if last else 0.0
+        totals_orders[o["number"]] = float(last.percent) if last else 0.0
 
     # ===== НОРМА ГОДИН =====
     work_days = (end_date - start_date).days + 1
@@ -1638,10 +1700,10 @@ def report_period_view(request):
         "start_date": start_date,
         "end_date": end_date,
         "orders": orders,
-        "workers": workers,
-        "table": table,
-        "totals_orders": totals_orders,
-        "totals_workers": totals_workers,
+        "workers": workers,              # [{"id":..., "name":...}, ...]
+        "table": table,                  # row[worker_id] зберігає години
+        "totals_orders": totals_orders,  # ключ = order_number
+        "totals_workers": totals_workers, # ключ = worker_id
         "total_all": total_all,
         "work_days": work_days,
         "norm_hours": norm_hours,
@@ -1652,7 +1714,6 @@ def report_period_view(request):
     if request.GET.get("export") == "pdf" and table:
         buffer = BytesIO()
 
-        # Шрифт як у generate_pdf
         font_path = os.path.join(
             settings.BASE_DIR, "doors", "static", "fonts", "DejaVuSerif.ttf"
         )
@@ -1662,7 +1723,6 @@ def report_period_view(request):
         else:
             base_font = "Helvetica"
 
-        # сторінка A4 в альбомній орієнтації
         page_size = landscape(A4)
         doc = SimpleDocTemplate(
             buffer,
@@ -1680,8 +1740,6 @@ def report_period_view(request):
         styles["Heading2"].fontSize = 12
 
         story = []
-
-        # ----- Заголовок -----
         title = (
             f"Звіт виробітку за період "
             f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
@@ -1689,66 +1747,48 @@ def report_period_view(request):
         story.append(Paragraph(title, styles["Heading2"]))
         story.append(Spacer(1, 8))
 
-        # ----- Табличні дані -----
         header = (
-                ["Дата"]
-                + [f"№{o}" for o in orders]
-                + list(workers)
-                + ["Σ год за день"]
+            ["Дата"]
+            + [f"№{o['number']}" for o in orders]
+            + [w["name"] for w in workers]
+            + ["Σ год за день"]
         )
         table_data = [header]
 
         for row in table:
-            row_cells = []
-            row_date = row["date"]
-            row_cells.append(row_date.strftime("%d.%m"))
+            row_cells = [row["date"].strftime("%d.%m")]
 
-            # замовлення – %
             for o in orders:
-                val = row.get(o, 0.0)
-                try:
-                    val = float(val)
-                except Exception:
-                    val = 0.0
+                val = float(row.get(o["number"], 0.0) or 0.0)
                 row_cells.append(f"{val:.1f}")
 
-            # працівники – години
             for w in workers:
-                val = row.get(w, Decimal("0"))
-                val = Decimal(str(val))
+                val = Decimal(str(row.get(w["id"], Decimal("0"))))
                 row_cells.append(f"{val:.1f}")
 
-            # Σ за день
             day_total = Decimal(str(row.get("total", 0)))
             row_cells.append(f"{day_total:.1f}")
-
             table_data.append(row_cells)
 
-        # Підсумковий рядок
         summary_row = ["Σ за період"]
         for o in orders:
-            val = totals_orders.get(o, 0.0)
+            val = float(totals_orders.get(o["number"], 0.0) or 0.0)
             summary_row.append(f"{val:.1f}%")
+
         for w in workers:
-            val = totals_workers.get(w, Decimal("0"))
-            val = Decimal(str(val))
+            val = Decimal(str(totals_workers.get(w["id"], Decimal("0"))))
             summary_row.append(f"{val:.1f}")
+
         summary_row.append(f"{total_all:.1f}")
         table_data.append(summary_row)
 
         col_count = len(header)
-
-        # Розрахунок ширини колонок по всій доступній ширині
         page_width, page_height = page_size
         available_width = page_width - doc.leftMargin - doc.rightMargin
         col_width = available_width / col_count
         col_widths = [col_width] * col_count
 
-        report_table = Table(
-            table_data,
-            colWidths=col_widths,
-            repeatRows=1,  # шапка повторюється на кожній сторінці
-        )
+        report_table = Table(table_data, colWidths=col_widths, repeatRows=1)
         report_table.setStyle(
             TableStyle(
                 [
@@ -1767,27 +1807,11 @@ def report_period_view(request):
         story.append(report_table)
         story.append(Spacer(1, 12))
 
-        # ----- Підсумки під таблицею -----
-        story.append(
-            Paragraph(f"Кількість днів у періоді: <b>{work_days}</b>", styles["Normal"])
-        )
-        story.append(
-            Paragraph(f"Загалом виконано: <b>{total_all:.1f} год</b>", styles["Normal"])
-        )
-        story.append(
-            Paragraph(
-                f"Норма (дні × 8 × 0.75): <b>{norm_hours:.1f} год</b>",
-                styles["Normal"],
-            )
-        )
-        story.append(
-            Paragraph(
-                f"Виконано від норми: <b>{percent_done:.1f}%</b>",
-                styles["Normal"],
-            )
-        )
+        story.append(Paragraph(f"Кількість днів у періоді: <b>{work_days}</b>", styles["Normal"]))
+        story.append(Paragraph(f"Загалом виконано: <b>{total_all:.1f} год</b>", styles["Normal"]))
+        story.append(Paragraph(f"Норма (дні × 8 × 0.75): <b>{norm_hours:.1f} год</b>", styles["Normal"]))
+        story.append(Paragraph(f"Виконано від норми: <b>{percent_done:.1f}%</b>", styles["Normal"]))
 
-        # Генеруємо PDF
         doc.build(story)
 
         buffer.seek(0)
@@ -1796,14 +1820,13 @@ def report_period_view(request):
         response["Content-Disposition"] = f'inline; filename="{filename}"'
         return response
 
-    # Якщо PDF не просили — повертаємо HTML
     return render(request, "doors/report_period.html", context)
-
 
 def worklog_add(request):
     if request.method == "POST":
         worker_id = request.POST.get("worker")
         hours = request.POST.get("hours")
+        work_hours = request.POST.get("work_hours")  # НОВЕ
         comment = request.POST.get("comment", "")
         date_str = request.POST.get("date")
 
@@ -1825,6 +1848,7 @@ def worklog_add(request):
             worker_id=worker_id,
             date=date,
             hours=hours,
+            work_hours=work_hours or None,  # НОВЕ
             comment=comment,
         )
 
