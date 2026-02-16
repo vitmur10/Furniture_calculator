@@ -1133,7 +1133,11 @@ body.preview-only #sketchHidePart{
     border-right: none !important;
   }
 }
-
+.toggle-btn{
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+}
 </style>
 
 
@@ -2474,26 +2478,30 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-if (toggleBtn && restoreBtn && sketchHidePart) {
+// Manual collapse/restore (photos + file list)
+if (toggleBtn && restoreBtn && sketchHidePart){
 
   toggleBtn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
+    e.stopImmediatePropagation();
 
     sketchHidePart.style.display = "none";
     toggleBtn.style.display = "none";
     restoreBtn.style.display = "inline-flex";
-  });
+  }, true);   // capture
 
   restoreBtn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
+    e.stopImmediatePropagation();
 
     sketchHidePart.style.display = "";
     restoreBtn.style.display = "none";
     toggleBtn.style.display = "inline-flex";
-  });
+  }, true);   // capture
 }
+
 
   // Open inline preview (A4-like fit in built-in PDF viewer)
   function buildPdfViewerUrl(rawUrl){
@@ -3002,79 +3010,33 @@ if (toggleBtn && restoreBtn && sketchHidePart) {
 </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-  const previewBox    = document.getElementById("pdfPreviewBox");
-  const pdfEmbed      = document.getElementById("pdfEmbed");
-  const closeBtn      = document.getElementById("closePreview");
-
   const hidePart      = document.getElementById("sketchHidePart");
-  const sketchSection = document.getElementById("sketch-section");
   const btnHide       = document.getElementById("toggleSketch");
   const btnShow       = document.getElementById("restoreSketch");
 
-  function enterPreviewMode() {
-    if (hidePart) hidePart.style.display = "none";
-    if (sketchSection) sketchSection.classList.add("preview-only");
-    document.body.classList.add("preview-only");
-    if (btnHide) btnHide.style.display = "none";
-    if (btnShow) btnShow.style.display = "inline-block";
-  }
+  if (!hidePart || !btnHide || !btnShow) return;
 
-  function exitPreviewMode() {
-    if (previewBox) previewBox.style.display = "none";
-    if (pdfEmbed) pdfEmbed.src = "";
-    if (hidePart) hidePart.style.display = "";
-    if (sketchSection) sketchSection.classList.remove("preview-only");
-    document.body.classList.remove("preview-only");
-    if (btnShow) btnShow.style.display = "none";
-    if (btnHide) btnHide.style.display = "inline-block";
-  }
+  // стартовий стан
+  btnShow.style.display = "none";
+  btnHide.style.display = "inline-block";
 
-  // Делегування кліку (працює навіть якщо кнопки генеруються/оновлюються)
-  document.addEventListener("click", (e) => {
-    const btn = e.target.closest(".js-preview");
-    if (!btn) return;
-
+  // ЗГОРНУТИ: ховаємо ТІЛЬКИ блок фото/файлів, нічого не відкриваємо
+  btnHide.addEventListener("click", (e) => {
     e.preventDefault();
-    const url = btn.getAttribute("data-preview-url");
-    if (!url) {
-      alert("Немає data-preview-url на кнопці");
-      return;
-    }
-
-    // показуємо A4-перегляд
-    enterPreviewMode();
-
-    // форсимо перезавантаження iframe
-    if (pdfEmbed) pdfEmbed.src = "";
-    setTimeout(() => {
-      const fitHash = "page=1&zoom=70&view=Fit";
-      const fitUrl = url.split("#")[0] + "#" + fitHash;
-      if (pdfEmbed) pdfEmbed.src = fitUrl;
-      if (previewBox) previewBox.style.display = "block";
-    }, 0);
+    e.stopPropagation();
+    hidePart.style.display = "none";
+    btnHide.style.display = "none";
+    btnShow.style.display = "inline-block";
   });
 
-  if (closeBtn) {
-    closeBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      exitPreviewMode();
-    });
-  }
-
-  // Якщо користувач натисне "Показати" — це вихід з preview-only, але preview лишаємо закритим
-  if (btnShow) {
-    btnShow.addEventListener("click", (e) => {
-      // цей listener може бути перевстановлений нижчим скриптом-клоном, тому тут робимо м’яко
-      // (не зупиняємо, просто виходимо з preview-only)
-      if (previewBox && previewBox.style.display === "block") {
-        // не заважаємо сценарію знизу; close робить повний reset
-        return;
-      }
-      if (hidePart) hidePart.style.display = "";
-      if (sketchSection) sketchSection.classList.remove("preview-only");
-      document.body.classList.remove("preview-only");
-    });
-  }
+  // ПОКАЗАТИ: повертаємо блок фото/файлів
+  btnShow.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    hidePart.style.display = "";
+    btnShow.style.display = "none";
+    btnHide.style.display = "inline-block";
+  });
 });
 </script>
 <script>
@@ -3136,18 +3098,14 @@ document.addEventListener("DOMContentLoaded", () => {
   btnShow.style.display = "none";
   btnHide.style.display = "inline-block";
 
-  // 4) Нові (єдині) хендлери: ховаємо ТІЛЬКИ hidePart
-  btnHide.addEventListener("click", (e) => {
-    e.preventDefault();
-    hidePart.style.display = "none";
-    sketchSection.classList.add("preview-only");
-    document.body.classList.add("preview-only");
-    btnHide.style.display = "none";
-    btnShow.style.display = "inline-block";
-    if (previewBox && pdfEmbed && pdfEmbed.src) {
-      previewBox.style.display = "block";
-    }
-  });
+    btnHide.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      hidePart.style.display = "none";
+      btnHide.style.display = "none";
+      btnShow.style.display = "inline-flex";
+    });
 
   btnShow.addEventListener("click", (e) => {
     e.preventDefault();
@@ -3198,7 +3156,6 @@ document.addEventListener("click", function(e){
   }
 });
 </script>
-
 
 <script>
   // =========================
