@@ -15,7 +15,7 @@
             {% for o in all_orders %}
               <option value="{{ o.id }}"
                       {% if selected_order and o.id == selected_order.id %}selected{% endif %}>
-                №{{ o.order_number }} {{selected_order.order_name }} від {{ o.created_at|date:"d.m.Y" }}
+                №{{ o.order_number }} {{o.order_name }} від {{ o.created_at|date:"d.m.Y" }}
               </option>
             {% endfor %}
           </select>
