@@ -266,40 +266,43 @@
     transform: scale(1.05);
   }
 
-  .toggle-btn {
-    position: absolute;
-    top: 15px;
-    right: 15px;
-    background: rgba(255,255,255,0.85);
-    border: none;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-weight: 600;
-    cursor: pointer;
-    z-index: 10;
-    transition: all 0.25s ease;
-  }
+#restoreSketch{
+    width: auto !important;
+    flex: 0 0 auto !important;
+    display: inline-flex !important;
+    align-items: center;
+    white-space: nowrap;
+
+    padding: 6px 14px;
+}.toggle-btn{
+  position: static !important;
+  top: auto !important;
+  right: auto !important;
+
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+
+  width: auto !important;
+  flex: 0 0 auto !important;
+  white-space: nowrap;
+
+  z-index: 1 !important; /* щоб не перекривала меню */
+}
+
   .toggle-btn:hover {
     background: #0d6efd;
     color: #fff;
   }
+  #sketch-section > .d-flex{
+  justify-content: flex-end;  /* тримаємо справа */
+  gap: 10px;
+}
 
-  #restoreSketch {
-    display: none;
-    position: fixed;
-    top: 80px;
-    left: 20px;
-    z-index: 1000;
-    background: #0d6efd;
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 14px;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    transition: all 0.3s ease;
-  }
+/* (опціонально) трошки повітря зверху */
+#sketch-section > .d-flex{
+  margin-top: 6px;
+}
   #restoreSketch:hover { background: #0b5ed7; }
 
   .order-form {
@@ -2471,28 +2474,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  // Manual collapse/restore (photos + file list)
-  if (toggleBtn && restoreBtn && sketchHidePart){
-    toggleBtn.addEventListener("click", () => {
-      sketchHidePart.style.display = "none";
-      toggleBtn.style.display = "none";
-      restoreBtn.style.display = "inline-block";
-      // keep preview visible if it was opened
-      if (pdfPreviewBox && pdfPreviewBox.style.display !== "none") {
-        setPreviewMode(true);
-      }
-    });
+if (toggleBtn && restoreBtn && sketchHidePart) {
 
-    restoreBtn.addEventListener("click", () => {
-      sketchHidePart.style.display = "";
-      restoreBtn.style.display = "none";
-      toggleBtn.style.display = "inline-block";
-      // if preview opened - stay in preview mode but show photos/files again
-      if (pdfPreviewBox && pdfPreviewBox.style.display !== "none") {
-        setPreviewMode(false);
-      }
-    });
-  }
+  toggleBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    sketchHidePart.style.display = "none";
+    toggleBtn.style.display = "none";
+    restoreBtn.style.display = "inline-flex";
+  });
+
+  restoreBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    sketchHidePart.style.display = "";
+    restoreBtn.style.display = "none";
+    toggleBtn.style.display = "inline-flex";
+  });
+}
 
   // Open inline preview (A4-like fit in built-in PDF viewer)
   function buildPdfViewerUrl(rawUrl){
