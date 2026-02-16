@@ -99,25 +99,40 @@
   </div>
 
   <!-- 🔹 Підсумкові розрахунки по годинах (норма) -->
+  <!-- 🔹 Підсумкові розрахунки по методичці замовника -->
   <div class="mt-4">
-    <h5 class="fw-bold">📈 Підсумкові розрахунки:</h5>
+    <h5 class="fw-bold">📈 Підсумкові розрахунки (по методичці):</h5>
     <ul class="list-group shadow-sm">
       <li class="list-group-item">
-        Кількість днів у періоді:
-        <strong>{{ work_days }}</strong>
+        Період:
+        <strong>{{ start_date|date:"d.m.Y" }} – {{ end_date|date:"d.m.Y" }}</strong>
+        ({{ work_days }} днів)
       </li>
+
       <li class="list-group-item">
-        Загалом виконано:
-        <strong>{{ total_all|floatformat:1 }} год</strong>
+        Всього виконано за період (Vзаг):
+        <strong>{{ vzag|floatformat:2 }} к/с</strong>
       </li>
+
       <li class="list-group-item">
-        Норма ({{ work_days }} × 8 × 0.75):
-        <strong>{{ norm_hours|floatformat:1 }} год</strong>
+        Норма виробітку (Hv):
+        <strong>{{ hv|floatformat:2 }} к/с/год</strong>
       </li>
+
       <li class="list-group-item">
-        Виконано від норми:
-        <strong class="{% if percent_done >= 100 %}text-success{% else %}text-danger{% endif %}">
-          {{ percent_done|floatformat:1 }}%
+        Нормативний час (Tнорма = Vзаг / Hv):
+        <strong>{{ t_norma|floatformat:1 }} год</strong>
+      </li>
+
+      <li class="list-group-item">
+        Фактичний час (Tфакт):
+        <strong>{{ t_fact|floatformat:1 }} год</strong>
+      </li>
+
+      <li class="list-group-item">
+        Ефективність (E = Tнорма / Tфакт × 100%):
+        <strong class="{% if eff_percent >= 100 %}text-success{% else %}text-danger{% endif %}">
+          {{ eff_percent|floatformat:1 }}%
         </strong>
       </li>
     </ul>

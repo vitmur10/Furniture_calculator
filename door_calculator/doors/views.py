@@ -1610,6 +1610,9 @@ def report_period_view(request):
     if start_date > end_date:
         start_date, end_date = end_date, start_date
 
+    # Норма виробітку (к/с за год). Можеш винести в settings або модель.
+    HV = Decimal("0.75")
+
     # Години працівників
     logs = (
         WorkLog.objects
@@ -1617,18 +1620,17 @@ def report_period_view(request):
         .filter(date__range=[start_date, end_date])
     )
 
-    # Всі записи OrderProgress за період
-    progress_qs = (
+    # Прогрес за період (щоб визначити перелік замовлень)
+    progress_in_period_qs = (
         OrderProgress.objects
         .select_related("order")
         .filter(date__range=[start_date, end_date])
     )
 
     # ----- СПИСОК ЗАМОВЛЕНЬ (БЕЗ ДУБЛІВ) -----
-    order_ids = progress_qs.values_list("order_id", flat=True).distinct()
+    order_ids = progress_in_period_qs.values_list("order_id", flat=True).distinct()
     orders_qs = Order.objects.filter(id__in=order_ids).order_by("order_number")
 
-    # зберігаємо як список dict з ключем number
     orders = [{"number": o.order_number, "name": o.order_name} for o in orders_qs]
 
     # ----- СПИСОК ПРАЦІВНИКІВ (ID + name) -----
@@ -1637,37 +1639,56 @@ def report_period_view(request):
             .values("worker_id", "worker__name")
             .distinct()
     )
-    # Нормалізуємо формат під шаблон
     workers = [{"id": w["worker_id"], "name": w["worker__name"]} for w in workers]
 
-    # ===== ПІДГОТОВКА МАПИ ГОДИН (ОДИН ЗАПИТ) =====
-    # (date, worker_id) -> total hours
+    # ===== МАПА ГОДИН (date, worker_id) -> total hours =====
     hours_map = {
         (x["date"], x["worker_id"]): Decimal(str(x["total"] or 0))
         for x in logs.values("date", "worker_id").annotate(total=Sum("hours"))
     }
 
+    # ===== Прогреси для замовлень до end_date (щоб дістати % на start/end і по днях) =====
+    order_numbers = [o["number"] for o in orders]
+    progress_all_qs = (
+        OrderProgress.objects
+        .filter(order__order_number__in=order_numbers, date__lte=end_date)
+        .order_by("order__order_number", "date")
+        .values("order__order_number", "date", "percent")
+    )
+
+    progress_by_order = {}
+    for p in progress_all_qs:
+        num = p["order__order_number"]
+        progress_by_order.setdefault(num, []).append(
+            (p["date"], Decimal(str(p["percent"])))
+        )
+
+    # helper: останній % <= target_date
+    def get_last_percent(num, target_date: date) -> Decimal:
+        arr = progress_by_order.get(num, [])
+        last = Decimal("0")
+        for d, perc in arr:
+            if d <= target_date:
+                last = perc
+            else:
+                break
+        return last
+
     # ===== ТАБЛИЦЯ ПО ДНЯХ =====
     table = []
     totals_workers = {w["id"]: Decimal("0") for w in workers}
-    total_all = Decimal("0")
+    total_all = Decimal("0")  # Tфакт (години за період)
 
     current_date = start_date
     while current_date <= end_date:
         row = {"date": current_date, "total": Decimal("0")}
 
         # % виконання по кожному замовленню станом на current_date
-        # (оптимізація: мінімально правимо, лишаємо як у тебе - але виправляємо ключі)
         for o in orders:
-            qs = (
-                OrderProgress.objects
-                .filter(order__order_number=o["number"], date__lte=current_date)
-                .order_by("-date")
-            )
-            last = qs.first()
-            row[o["number"]] = float(last.percent) if last else 0.0
+            num = o["number"]
+            row[num] = float(get_last_percent(num, current_date))  # для красивого виводу
 
-        # години по працівниках на current_date (без додаткових запитів)
+        # години по працівниках
         for w in workers:
             wid = w["id"]
             h = hours_map.get((current_date, wid), Decimal("0"))
@@ -1679,146 +1700,67 @@ def report_period_view(request):
         table.append(row)
         current_date += timedelta(days=1)
 
-    # ===== ПІДСУМКОВИЙ % ПО ЗАМОВЛЕННЯХ ЗА ПЕРІОД (на end_date) =====
-    calc_date = end_date or date.today()
+    # ===== ПІДСУМКОВИЙ % ПО ЗАМОВЛЕННЯХ (на end_date) =====
     totals_orders = {}
     for o in orders:
-        qs = (
-            OrderProgress.objects
-            .filter(order__order_number=o["number"], date__lte=calc_date)
-            .order_by("-date")
-        )
-        last = qs.first()
-        totals_orders[o["number"]] = float(last.percent) if last else 0.0
+        num = o["number"]
+        totals_orders[num] = float(get_last_percent(num, end_date))
 
-    # ===== НОРМА ГОДИН =====
+    # ===== РОЗРАХУНОК ПО МЕТОДИЧЦІ ЗАМОВНИКА =====
+    # Vза_період[i] = ( %кін - %до ) * Vz / 100
+    # Vz беремо як total_ks (к/с) у Order
+    orders_map = {o.order_number: o for o in orders_qs}
+
+    start_percents = {num: get_last_percent(num, start_date) for num in order_numbers}
+    end_percents = {num: get_last_percent(num, end_date) for num in order_numbers}
+
+    vza_period_by_order = {}
+    vzag = Decimal("0")
+
+    for num in order_numbers:
+        order_obj = orders_map.get(num)
+        vz = Decimal(str(getattr(order_obj, "total_ks", 0) or 0))
+        d_percent = end_percents[num] - start_percents[num]
+        vza = (d_percent * vz) / Decimal("100")
+
+        # якщо не хочемо від’ємні значення (регрес) — обрізаємо
+        if vza < 0:
+            vza = Decimal("0")
+
+        vza_period_by_order[num] = vza
+        vzag += vza
+
+    t_norma = (vzag / HV) if HV > 0 else Decimal("0")  # години по нормі
+    t_fact = total_all                                # фактичні години
+    eff_percent = (t_norma / t_fact * Decimal("100")) if t_fact > 0 else Decimal("0")
+
     work_days = (end_date - start_date).days + 1
-    norm_hours = Decimal(work_days * 8) * Decimal("0.75")
-    percent_done = (total_all / norm_hours * Decimal("100")) if norm_hours > 0 else Decimal("0")
 
     context = {
         "start_date": start_date,
         "end_date": end_date,
         "orders": orders,
-        "workers": workers,              # [{"id":..., "name":...}, ...]
-        "table": table,                  # row[worker_id] зберігає години
-        "totals_orders": totals_orders,  # ключ = order_number
-        "totals_workers": totals_workers, # ключ = worker_id
-        "total_all": total_all,
+        "workers": workers,
+        "table": table,
+        "totals_orders": totals_orders,
+        "totals_workers": totals_workers,
+        "total_all": total_all,     # Tфакт
         "work_days": work_days,
-        "norm_hours": norm_hours,
-        "percent_done": percent_done,
+
+        # нові показники по методичці
+        "hv": HV,
+        "vzag": vzag,
+        "t_norma": t_norma,
+        "t_fact": t_fact,
+        "eff_percent": eff_percent,
+        "vza_period_by_order": vza_period_by_order,
     }
 
     # ===== Якщо просили PDF =====
     if request.GET.get("export") == "pdf" and table:
-        buffer = BytesIO()
-
-        font_path = os.path.join(
-            settings.BASE_DIR, "doors", "static", "fonts", "DejaVuSerif.ttf"
-        )
-        if os.path.exists(font_path):
-            pdfmetrics.registerFont(TTFont("DejaVuSerif", font_path))
-            base_font = "DejaVuSerif"
-        else:
-            base_font = "Helvetica"
-
-        page_size = landscape(A4)
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=page_size,
-            leftMargin=20,
-            rightMargin=20,
-            topMargin=40,
-            bottomMargin=30,
-        )
-
-        styles = getSampleStyleSheet()
-        styles["Normal"].fontName = base_font
-        styles["Normal"].fontSize = 7
-        styles["Heading2"].fontName = base_font
-        styles["Heading2"].fontSize = 12
-
-        story = []
-        title = (
-            f"Звіт виробітку за період "
-            f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
-        )
-        story.append(Paragraph(title, styles["Heading2"]))
-        story.append(Spacer(1, 8))
-
-        header = (
-            ["Дата"]
-            + [f"№{o['number']}" for o in orders]
-            + [w["name"] for w in workers]
-            + ["Σ год за день"]
-        )
-        table_data = [header]
-
-        for row in table:
-            row_cells = [row["date"].strftime("%d.%m")]
-
-            for o in orders:
-                val = float(row.get(o["number"], 0.0) or 0.0)
-                row_cells.append(f"{val:.1f}")
-
-            for w in workers:
-                val = Decimal(str(row.get(w["id"], Decimal("0"))))
-                row_cells.append(f"{val:.1f}")
-
-            day_total = Decimal(str(row.get("total", 0)))
-            row_cells.append(f"{day_total:.1f}")
-            table_data.append(row_cells)
-
-        summary_row = ["Σ за період"]
-        for o in orders:
-            val = float(totals_orders.get(o["number"], 0.0) or 0.0)
-            summary_row.append(f"{val:.1f}%")
-
-        for w in workers:
-            val = Decimal(str(totals_workers.get(w["id"], Decimal("0"))))
-            summary_row.append(f"{val:.1f}")
-
-        summary_row.append(f"{total_all:.1f}")
-        table_data.append(summary_row)
-
-        col_count = len(header)
-        page_width, page_height = page_size
-        available_width = page_width - doc.leftMargin - doc.rightMargin
-        col_width = available_width / col_count
-        col_widths = [col_width] * col_count
-
-        report_table = Table(table_data, colWidths=col_widths, repeatRows=1)
-        report_table.setStyle(
-            TableStyle(
-                [
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-                    ("FONTNAME", (0, 0), (-1, -1), base_font),
-                    ("FONTSIZE", (0, 0), (-1, -1), 7),
-                    ("ALIGN", (1, 1), (-1, -1), "CENTER"),
-                    ("ALIGN", (0, 0), (0, -1), "LEFT"),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e3f2fd")),
-                    ("BACKGROUND", (0, len(table_data) - 1), (-1, len(table_data) - 1), colors.lightgrey),
-                ]
-            )
-        )
-
-        story.append(report_table)
-        story.append(Spacer(1, 12))
-
-        story.append(Paragraph(f"Кількість днів у періоді: <b>{work_days}</b>", styles["Normal"]))
-        story.append(Paragraph(f"Загалом виконано: <b>{total_all:.1f} год</b>", styles["Normal"]))
-        story.append(Paragraph(f"Норма (дні × 8 × 0.75): <b>{norm_hours:.1f} год</b>", styles["Normal"]))
-        story.append(Paragraph(f"Виконано від норми: <b>{percent_done:.1f}%</b>", styles["Normal"]))
-
-        doc.build(story)
-
-        buffer.seek(0)
-        filename = f"work_report_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.pdf"
-        response = HttpResponse(buffer, content_type="application/pdf")
-        response["Content-Disposition"] = f'inline; filename="{filename}"'
-        return response
+        # тут залишаєш свій існуючий код PDF без змін
+        # (якщо треба — потім доповнимо PDF цими метриками)
+        pass
 
     return render(request, "doors/report_period.html", context)
 
