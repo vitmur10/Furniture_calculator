@@ -7,7 +7,8 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Sum, Q
-from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest, FileResponse, StreamingHttpResponse, Http404,QueryDict
+from django.http import HttpResponse, JsonResponse, HttpResponseBadRequest, FileResponse, StreamingHttpResponse, \
+    Http404, QueryDict
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -39,6 +40,7 @@ import logging
 from math import ceil
 from decimal import Decimal, ROUND_HALF_UP
 from django.shortcuts import get_object_or_404, redirect, render
+
 logger = logging.getLogger(__name__)
 
 
@@ -223,7 +225,6 @@ def update_status(request, order_id):
     })
 
 
-
 @require_POST
 def delete_order(request, order_id):
     order = get_object_or_404(Order, id=order_id)
@@ -291,8 +292,6 @@ def get_item_color(item_id: int | None) -> str:
         return "#ff4d4f"
     idx = (int(item_id) - 1) % len(ITEM_COLOR_PALETTE)
     return ITEM_COLOR_PALETTE[idx]
-
-
 
 
 def calculate_order(request, order_id):
@@ -430,16 +429,16 @@ def calculate_order(request, order_id):
     # POST: add item
     # ============================================================
     if request.method == "POST" and all(
-        x not in request.POST
-        for x in [
-            "upload_images",
-            "upload_files",
-            "update_file",
-            "delete_file",
-            "assign_customer",
-            "save_markup",
-            "bulk_coefficients",
-        ]
+            x not in request.POST
+            for x in [
+                "upload_images",
+                "upload_files",
+                "update_file",
+                "delete_file",
+                "assign_customer",
+                "save_markup",
+                "bulk_coefficients",
+            ]
     ):
         order_name = (request.POST.get("order_name") or "").strip()
         order_name_template_id = request.POST.get("order_name_template") or ""
@@ -464,6 +463,11 @@ def calculate_order(request, order_id):
         item_qty = _to_decimal_or_one(request.POST.get("item_qty", 1))
 
         calc_mode = (request.POST.get("calc_mode") or "products").strip().lower()
+
+        # NEW: facade_total_ks is primary (methodology result in KS)
+        facade_total_ks = _to_decimal_or_none(request.POST.get("facade_total_ks"))
+
+        # BACKWARD COMPAT: old field facade_total_cost (money) if ks not provided
         facade_total_cost = _to_decimal_or_none(request.POST.get("facade_total_cost"))
 
         selected_products = request.POST.getlist("products")
@@ -474,42 +478,47 @@ def calculate_order(request, order_id):
         item = OrderItem.objects.create(order=order, name=name, quantity=item_qty)
 
         # ============================================================
-        # FACADE MODE: do NOT save facade as product data; just add as a line item
-        # We represent the facade cost as KS via a single generic product with base_ks = 1,
-        # and quantity = needed KS. This avoids editing/overwriting product prices.
+        # FACADE MODE (methodology): add as KS carrier, no saving as separate products
         # ============================================================
         if calc_mode == "facade":
-            if facade_total_cost is None or facade_total_cost <= 0:
+            # Prefer KS from methodology
+            ks_qty = facade_total_ks
+
+            # Fallback: if only money provided (legacy), convert -> ks
+            if (ks_qty is None or ks_qty <= 0) and facade_total_cost is not None:
+                if price_per_ks <= 0:
+                    item.delete()
+                    messages.error(request, "Не вдалося додати фасад: не заданий курс (ціна за кс).")
+                    return redirect("calculate_order", order_id=order.id)
+                ks_qty = (facade_total_cost / price_per_ks)
+
+            if ks_qty is None or ks_qty <= 0:
                 item.delete()
-                messages.error(request, "Не вдалося додати фасад: сума фасаду порожня або 0. Перерахуй фасад і спробуй ще раз.")
+                messages.error(
+                    request,
+                    "Не вдалося додати фасад: значення фасаду (кс) порожнє або 0. Перерахуй фасад і спробуй ще раз."
+                )
                 return redirect("calculate_order", order_id=order.id)
 
-            if price_per_ks <= 0:
-                item.delete()
-                messages.error(request, "Не вдалося додати фасад: не заданий курс (ціна за кс).")
-                return redirect("calculate_order", order_id=order.id)
-
-            # Convert money -> KS so the existing pipeline (markups, totals, PDF) works unchanged.
-            facade_ks_qty = (facade_total_cost / price_per_ks)
-            # keep some precision, but avoid crazy long decimals
-            facade_ks_qty = _q2(facade_ks_qty) if facade_ks_qty > 0 else Decimal("0")
+            # keep precision, but avoid too many decimals (you can change to 0.001 if needed)
+            ks_qty = ks_qty.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
 
             # Find or create a single generic product used only as a carrier of KS amount.
-            # It is created once; we never update its base_ks.
             cat = Category.objects.filter(name__iexact="інше").first() or Category.objects.first()
             facade_product, _created = Product.objects.get_or_create(
                 name="Фасад (розрахунок)",
                 defaults={"base_ks": Decimal("1"), "category": cat} if cat else {"base_ks": Decimal("1")},
             )
 
-            # Safety: if base_ks is empty/0, set it once to 1 (carrier), but don't overwrite normal products.
-            if not facade_product.base_ks or Decimal(str(facade_product.base_ks)) == 0:
+            # Safety: base_ks must be 1
+            if not facade_product.base_ks or Decimal(str(facade_product.base_ks)) != Decimal("1"):
                 facade_product.base_ks = Decimal("1")
                 facade_product.save(update_fields=["base_ks"])
 
-            OrderItemProduct.objects.create(order_item=item, product=facade_product, quantity=facade_ks_qty)
+            # IMPORTANT: quantity is KS amount (methodology result)
+            OrderItemProduct.objects.create(order_item=item, product=facade_product, quantity=ks_qty)
 
-            # No additions/coefficients from "products" block in facade mode (all included in facade_total_cost).
+            # no additions/coeffs from products block in facade mode
             _recalc_order_totals(order)
             order.refresh_from_db()
             return redirect("calculate_order", order_id=order.id)
@@ -534,7 +543,6 @@ def calculate_order(request, order_id):
         _recalc_order_totals(order)
         order.refresh_from_db()
         return redirect("calculate_order", order_id=order.id)
-
 
     # ============================================================
     # GET: prepare
@@ -626,7 +634,10 @@ def calculate_order(request, order_id):
         ]
         products_breakdown = NL.join(prod_lines) if prod_lines else "—"
 
-        add_lines = [f"• {ai.addition.name} ×{_q2(ai.quantity)}: {_q2(Decimal(str(ai.total_ks() or 0)))}" for ai in it.addition_items.all()]
+        add_lines = [
+            f"• {ai.addition.name} ×{_q2(ai.quantity)}: {_q2(Decimal(str(ai.total_ks() or 0)))}"
+            for ai in it.addition_items.all()
+        ]
         addons_breakdown = NL.join(add_lines) if add_lines else "—"
 
         coefs_breakdown = NL.join(coef_lines) if coef_lines else "—"
@@ -654,7 +665,6 @@ def calculate_order(request, order_id):
     # ====== ДОПОВНЕННЯ: глобальні + по категоріях (НОВЕ) ======
     addons_global = Addition.objects.filter(applies_globally=True).order_by("name")
 
-    # список, щоб у шаблоні не потрібен був get_item-фільтр
     addons_by_category = []
     for cat in categories:
         cat_adds = (
@@ -867,6 +877,7 @@ def build_item_formula_parts(it):
       ks_effective
       ks_formula
     """
+
     def _q2(x: Decimal) -> Decimal:
         return Decimal(x).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -985,8 +996,8 @@ def generate_pdf(request, order_id):
         Повертає КС з об'єкта, якщо є (Order/OrderItem), або 0.
         """
         for attr in (
-            "total_ks", "total_ks_cached", "ks_total", "total_ks_value",
-            "ks_effective", "effective_ks", "ks_value", "ks"
+                "total_ks", "total_ks_cached", "ks_total", "total_ks_value",
+                "ks_effective", "effective_ks", "ks_value", "ks"
         ):
             if hasattr(obj, attr):
                 val = getattr(obj, attr)
@@ -1228,7 +1239,7 @@ def generate_pdf(request, order_id):
 
             effective_ks_sum += ks_eff
             total_sum += final_price
-            mark_up = final_price-base_price
+            mark_up = final_price - base_price
             data.append([
                 str(idx),
                 name[:45],
@@ -1636,8 +1647,8 @@ def report_period_view(request):
     # ----- СПИСОК ПРАЦІВНИКІВ (ID + name) -----
     workers = list(
         logs.order_by("worker__name")
-            .values("worker_id", "worker__name")
-            .distinct()
+        .values("worker_id", "worker__name")
+        .distinct()
     )
     workers = [{"id": w["worker_id"], "name": w["worker__name"]} for w in workers]
 
@@ -1731,7 +1742,7 @@ def report_period_view(request):
         vzag += vza
 
     t_norma = (vzag / HV) if HV > 0 else Decimal("0")  # години по нормі
-    t_fact = total_all                                # фактичні години
+    t_fact = total_all  # фактичні години
     eff_percent = (t_norma / t_fact * Decimal("100")) if t_fact > 0 else Decimal("0")
 
     work_days = (end_date - start_date).days + 1
@@ -1744,7 +1755,7 @@ def report_period_view(request):
         "table": table,
         "totals_orders": totals_orders,
         "totals_workers": totals_workers,
-        "total_all": total_all,     # Tфакт
+        "total_all": total_all,  # Tфакт
         "work_days": work_days,
 
         # нові показники по методичці
@@ -1763,6 +1774,7 @@ def report_period_view(request):
         pass
 
     return render(request, "doors/report_period.html", context)
+
 
 def worklog_add(request):
     if request.method == "POST":
@@ -1959,7 +1971,6 @@ def options_for_products(request):
     })
 
 
-
 def order_item_edit(request, item_id):
     item = get_object_or_404(OrderItem, id=item_id)
     order = item.order
@@ -2066,6 +2077,7 @@ def order_item_edit(request, item_id):
         "selected_coeffs_ids": selected_coeffs_ids,
         "addition_qty": addition_qty,
     })
+
 
 def order_item_delete(request, item_id):
     item = get_object_or_404(OrderItem, id=item_id)
@@ -2613,12 +2625,14 @@ def sync_internal_pdf(request, order_id):
             ("detailed", {**base_params}, f"{mode_label}_Детальний_{order.order_number}.pdf"),
             ("offer", {**base_params, "simple": 1}, f"{mode_label}_Комерційна_пропозиція_{order.order_number}.pdf"),
             (
-            "internal", {**base_params, "internal": 1}, f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
+                "internal", {**base_params, "internal": 1},
+                f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
         ]
     else:
         pdfs = [
             (
-            "internal", {**base_params, "internal": 1}, f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
+                "internal", {**base_params, "internal": 1},
+                f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
         ]
     rendered = []
     for label, params, filename in pdfs:
@@ -2655,6 +2669,7 @@ def sync_internal_pdf(request, order_id):
         "uploaded_to": uploaded_folders,
         "files": [f for _, f, _ in rendered],
     })
+
 
 def find_folder_contains_all(children, *needles: str):
     nn = [_lower(x) for x in needles if x]

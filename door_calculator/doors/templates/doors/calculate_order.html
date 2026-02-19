@@ -1390,6 +1390,7 @@ body.preview-only #sketchHidePart{
       {% csrf_token %}
       <input type="hidden" name="calc_mode" id="calcMode" value="products">
       <input type="hidden" name="facade_total_cost" id="facadeTotalCost" value="">
+      <input type="hidden" name="facade_total_ks" id="facadeTotalKs" value="">
 
         <div class="mb-3">
           <label class="form-label fw-bold">Назва / номер конструкції</label>
@@ -1437,7 +1438,7 @@ body.preview-only #sketchHidePart{
         <div class="alert alert-info py-2 mb-3">
           <div class="small">
             Заповни параметри фасаду → натисни <b>“Використати фасад як позицію”</b>.
-            Після цього фасад піде як товарна позиція (через <code>name</code>, <code>item_qty</code> і <code>facade_total_cost</code>).
+            Після цього фасад піде як товарна позиція (через <code>name</code>, <code>item_qty</code> і <code>facade_total_ks</code>).
           </div>
         </div>
 
@@ -1478,9 +1479,9 @@ body.preview-only #sketchHidePart{
           </div>
 
           <!-- Rate -->
-          <div class="col-12 mt-3"><div class="fw-bold mb-1">Тариф</div></div>
+          <div class="col-12 mt-3 facade-hidden"><div class="fw-bold mb-1">Тариф</div></div>
 
-          <div class="col-md-3">
+          <div class="col-md-3 facade-hidden">
             <label class="form-label small mb-1">Базова ставка (за м²)</label>
             <input type="number" min="0" step="any"
                    class="form-control form-control-sm"
@@ -1567,7 +1568,7 @@ body.preview-only #sketchHidePart{
           </div>
 
           <div class="col-md-3">
-            <label class="form-label small mb-1">База (Sконстр×ставка)</label>
+            <label class="form-label small mb-1">Kз (коеф. дрібності)</label>
             <input type="text" class="form-control form-control-sm" id="facadeBaseCost" readonly>
           </div>
           <div class="col-md-3">
@@ -1575,7 +1576,7 @@ body.preview-only #sketchHidePart{
             <input type="text" class="form-control form-control-sm" id="facadeExtrasCost" readonly>
           </div>
           <div class="col-md-6">
-            <label class="form-label small mb-1">Підсумок фасаду (ціна позиції)</label>
+            <label class="form-label small mb-1">Підсумок фасаду (кс)</label>
             <input type="text" class="form-control form-control-sm fw-bold" id="facadeTotalCostView" readonly>
           </div>
 
@@ -3169,7 +3170,6 @@ document.addEventListener("click", function(e){
       sFill: document.getElementById("facadeSFill"),
       n: document.getElementById("facadeElements"),
       sCurve: document.getElementById("facadeSCurve"),
-      baseRate: document.getElementById("facadeBaseRate"),
 
       reinforcement: document.getElementById("facadeReinforcement"),
       sloped: document.getElementById("facadeSloped"),
@@ -3183,11 +3183,12 @@ document.addEventListener("click", function(e){
       curvePercent: document.getElementById("facadeCurvePercent"),
       kCurve: document.getElementById("facadeKCurve"),
       kFlags: document.getElementById("facadeKFlags"),
-      baseCost: document.getElementById("facadeBaseCost"),
+      kzView: document.getElementById("facadeBaseCost"),     // reused field: shows Kз by methodology
       extrasCost: document.getElementById("facadeExtrasCost"),
       totalView: document.getElementById("facadeTotalCostView"),
 
-      totalHidden: document.getElementById("facadeTotalCost"),
+      totalHiddenCost: document.getElementById("facadeTotalCost"), // keep for backward compatibility
+      totalHiddenKs: document.getElementById("facadeTotalKs"),
 
       btnUse: document.getElementById("btnUseFacadeAsItem"),
       btnReset: document.getElementById("btnResetFacadeMode"),
@@ -3196,14 +3197,15 @@ document.addEventListener("click", function(e){
     };
 
     // If facade section not present, do nothing (safe include)
-    if (!els.sConstr || !els.totalHidden || !els.btnUse || !els.btnReset) return;
+    if (!els.sConstr || !els.totalHiddenKs || !els.btnUse || !els.btnReset) return;
 
-    // constants from methodology (adjust anytime)
-    const X_ET = 2.0;
-    const K_TZ = 0.055;
+    // === Methodology constants ===
+    const X_ET = 2.0;          // еталонна середня площа (м²)
+    const K_TZ = 0.055;        // коеф. залежності трудовитрат
+    const B_F_ET = 0.5;        // Bф/ет (кс) — базова трудомісткість еталону
     const K_CURVE_FACTOR = 0.002;
-    const CRACKER_RATE = 0.02;
-    const SUPPORT_RATE = 0.15;
+    const CRACKER_RATE = 0.02; // кс/шт
+    const SUPPORT_RATE = 0.15; // кс/шт
 
     function num(v) {
       const x = parseFloat(String(v ?? "").replace(",", "."));
@@ -3230,57 +3232,68 @@ document.addEventListener("click", function(e){
       return { percent, k };
     }
 
-    function getKSize(sFill, n) {
-      if (sFill <= 0 || n <= 0) return { xavg: 0, k: 1.0 };
+    // Kз from methodology:
+    // Xзм = Sз / N
+    // Kз = max(0, Xет - Xзм) * Kт/з + Bф/ет
+    function getKz(sFill, n) {
+      if (sFill <= 0 || n <= 0) return { xavg: 0, kz: 0 };
       const xavg = sFill / n;
-      if (xavg >= X_ET) return { xavg, k: 1.0 };
-      const diff = (X_ET - xavg);
-      const k = 1.0 + diff * K_TZ;
-      return { xavg, k };
+      const diff = Math.max(0, X_ET - xavg);
+      const kz = diff * K_TZ + B_F_ET;
+      return { xavg, kz };
     }
 
     function recalcFacade() {
       const sConstr = num(els.sConstr.value);
       const sFill = num(els.sFill.value);
       const n = Math.max(1, Math.floor(num(els.n.value) || 0));
+
       const sCurveRaw = num(els.sCurve.value);
       const sCurve = clamp(sCurveRaw, 0, sFill > 0 ? sFill : sCurveRaw);
       if (sFill > 0 && sCurveRaw !== sCurve) els.sCurve.value = String(sCurve);
 
-      const baseRate = num(els.baseRate.value);
       const crackers = Math.max(0, Math.floor(num(els.crackers.value) || 0));
       const supports = Math.max(0, Math.floor(num(els.supports.value) || 0));
 
-      const { xavg, k: kSize } = getKSize(sFill, n);
+      const { xavg, kz } = getKz(sFill, n);
       const curve = getKCurve(sCurve, sFill);
       const kFlags = getKFlags();
 
-      const baseCost = sConstr * baseRate;
-      const extrasCost = crackers * CRACKER_RATE + supports * SUPPORT_RATE;
-      const total = baseCost * kSize * curve.k * kFlags + extrasCost;
+      const extrasKs = crackers * CRACKER_RATE + supports * SUPPORT_RATE;
+
+      // === final by methodology (кс) ===
+      const totalKs = (sConstr > 0 ? (sConstr * kz * curve.k * kFlags) : 0) + extrasKs;
 
       // views
       els.xavg.value = xavg ? xavg.toFixed(3) : "";
       els.curvePercent.value = curve.percent.toFixed(2);
       els.kCurve.value = curve.k.toFixed(4);
       els.kFlags.value = kFlags.toFixed(4);
-      els.baseCost.value = baseCost ? baseCost.toFixed(2) : "";
-      els.extrasCost.value = extrasCost.toFixed(2);
-      els.totalView.value = total ? total.toFixed(2) : "";
-      els.totalHidden.value = total ? total.toFixed(2) : "";
+      if (els.kzView) els.kzView.value = kz ? kz.toFixed(4) : "";
+      els.extrasCost.value = extrasKs.toFixed(2);
+      els.totalView.value = totalKs ? totalKs.toFixed(3) : "";
 
-      return { total, sConstr, curvePercent: curve.percent };
+      // hidden: store ks in BOTH fields (cost field kept for older backend)
+      els.totalHiddenKs.value = totalKs ? totalKs.toFixed(6) : "";
+      if (els.totalHiddenCost) els.totalHiddenCost.value = totalKs ? totalKs.toFixed(6) : "";
+
+      return { totalKs, sConstr, sFill, n, curvePercent: curve.percent };
     }
 
     function setProductsDisabled(disabled) {
-      const productsWrap = document.getElementById("productsByCategories") || document.getElementById("productsFlatList");
-      if (!productsWrap) return;
-      productsWrap.classList.toggle("facade-muted", disabled);
+      const byCats = document.getElementById("productsByCategories");
+      const flat = document.getElementById("productsFlatList");
+      const addons = document.querySelector(".addons-categories-grid")?.closest(".mb-3") || null;
+
+      [byCats, flat, addons].forEach(wrap => {
+        if (!wrap) return;
+        wrap.classList.toggle("facade-muted", disabled);
+      });
     }
 
     // bind recalc on input changes
     [
-      els.sConstr, els.sFill, els.n, els.sCurve, els.baseRate,
+      els.sConstr, els.sFill, els.n, els.sCurve,
       els.reinforcement, els.sloped, els.breaks, els.structural,
       els.crackers, els.supports
     ].forEach(el => {
@@ -3291,15 +3304,15 @@ document.addEventListener("click", function(e){
 
     els.btnUse.addEventListener("click", () => {
       const r = recalcFacade();
-      if (!r.total || r.total <= 0) {
-        alert("Заповни S конструкції та базову ставку, щоб отримати суму фасаду.");
+      if (!r.totalKs || r.totalKs <= 0) {
+        alert("Заповни S конструкції та параметри фасаду, щоб отримати підсумок (кс).");
         return;
       }
       if (calcModeEl) calcModeEl.value = "facade";
 
       // auto name + qty=1
       if (els.positionName) {
-        const title = `Фасад — S=${r.sConstr.toFixed(2)}м², крив=${r.curvePercent.toFixed(1)}%`;
+        const title = `Фасад — Sконстр=${r.sConstr.toFixed(2)}м², Sз=${r.sFill.toFixed(2)}м², N=${r.n}, крив=${r.curvePercent.toFixed(1)}%`;
         if (!els.positionName.value.trim()) els.positionName.value = title;
       }
       const itemQty = document.querySelector('input[name="item_qty"]');
@@ -3310,7 +3323,8 @@ document.addEventListener("click", function(e){
 
     els.btnReset.addEventListener("click", () => {
       if (calcModeEl) calcModeEl.value = "products";
-      els.totalHidden.value = "";
+      els.totalHiddenKs.value = "";
+      if (els.totalHiddenCost) els.totalHiddenCost.value = "";
       setProductsDisabled(false);
     });
 
