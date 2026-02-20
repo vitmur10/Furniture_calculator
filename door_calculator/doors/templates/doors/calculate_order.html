@@ -1157,10 +1157,19 @@ body.preview-only #sketchHidePart{
 /* назва — НЕ переноситься, обрізається ... */
 .addon-row .addon-name{
   flex: 1 1 auto;
-  min-width: 0;                 /* важливо для ellipsis */
-  white-space: nowrap;
+  min-width: 0;
+
+  /* Дозволяємо 2 рядки замість 1 */
+  white-space: normal;        /* тепер текст може переноситись */
+  word-break: break-word;     /* перенос довгих слів */
+  line-height: 1.2;
+
+  /* обмеження до 2 рядків */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;      /* максимум 2 рядки */
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+
   padding: 4px 8px;
 }
 
