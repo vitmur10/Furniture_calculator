@@ -1140,31 +1140,31 @@ body.preview-only #sketchHidePart{
   right: auto !important;
 }
 }
-/* ===== ADDONS: ALWAYS ONE ROW, NAME WRAPS INSIDE ===== */
+/* ===== ADDONS: STRICT ONE LINE ===== */
+
 .addon-row{
   display: grid !important;
-  grid-template-columns: 40px minmax(0,1fr) 64px max-content; /* 64px під 3 цифри */
+  grid-template-columns: 40px 1fr 64px max-content;
   align-items: center;
-  gap: 0;
 }
 
-/* checkbox cell */
+/* чекбокс */
 .addon-row .input-group-text:first-child{
   width: 40px;
   justify-content: center;
   padding: 4px 6px;
 }
 
-/* name cell: can wrap, does NOT push qty down */
+/* назва — НЕ переноситься */
 .addon-row .addon-name{
-  min-width: 0;              /* ключове для minmax(0,1fr) */
-  white-space: normal;       /* дозволяємо перенос */
-  overflow-wrap: anywhere;   /* щоб дуже довгі слова теж переносились */
-  line-height: 1.15;
+  min-width: 0;
+  white-space: nowrap;        /* ❗ ЗАБОРОНА ПЕРЕНОСУ */
+  overflow: hidden;
+  text-overflow: ellipsis;    /* ... якщо не влазить */
   padding: 4px 8px;
 }
 
-/* qty: compact, 3 digits */
+/* поле кількості — максимум 3 цифри */
 .addon-row .addon-qty{
   width: 64px !important;
   min-width: 64px !important;
@@ -1174,7 +1174,7 @@ body.preview-only #sketchHidePart{
   padding: 2px 4px;
 }
 
-/* ks: never wrap */
+/* к/с */
 .addon-row .addon-ks{
   white-space: nowrap;
   padding: 4px 8px;
