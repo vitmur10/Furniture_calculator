@@ -1140,44 +1140,41 @@ body.preview-only #sketchHidePart{
   right: auto !important;
 }
 }
-/* ===== FIX ADDONS LAYOUT (only this part updated) ===== */
-
-/* ===== COMPACT ADDONS LAYOUT (3-digit max) ===== */
-
+/* ===== ADDONS: ALWAYS ONE ROW, NAME WRAPS INSIDE ===== */
 .addon-row{
   display: grid !important;
-  grid-template-columns: 40px minmax(0,1fr) 70px max-content;
+  grid-template-columns: 40px minmax(0,1fr) 64px max-content; /* 64px під 3 цифри */
   align-items: center;
   gap: 0;
 }
 
-/* чекбокс */
+/* checkbox cell */
 .addon-row .input-group-text:first-child{
   width: 40px;
   justify-content: center;
   padding: 4px 6px;
 }
 
-/* назва */
+/* name cell: can wrap, does NOT push qty down */
 .addon-row .addon-name{
-  white-space: normal;
+  min-width: 0;              /* ключове для minmax(0,1fr) */
+  white-space: normal;       /* дозволяємо перенос */
+  overflow-wrap: anywhere;   /* щоб дуже довгі слова теж переносились */
   line-height: 1.15;
   padding: 4px 8px;
-  min-width: 0;
 }
 
-/* поле кількості — максимум 3 цифри */
+/* qty: compact, 3 digits */
 .addon-row .addon-qty{
-  width: 70px !important;
-  min-width: 70px !important;
-  max-width: 70px !important;
-
+  width: 64px !important;
+  min-width: 64px !important;
+  max-width: 64px !important;
   text-align: center;
-  padding: 2px 4px;
   height: 30px;
+  padding: 2px 4px;
 }
 
-/* к/с */
+/* ks: never wrap */
 .addon-row .addon-ks{
   white-space: nowrap;
   padding: 4px 8px;
