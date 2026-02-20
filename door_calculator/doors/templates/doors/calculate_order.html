@@ -1139,33 +1139,34 @@ body.preview-only #sketchHidePart{
   top: auto !important;
   right: auto !important;
 }
-}
-/* ===== ADDONS: STRICT ONE LINE ===== */
-
+/* ===== ADDONS: STRICT ONE LINE (FINAL) ===== */
 .addon-row{
-  display: grid !important;
-  grid-template-columns: 40px 1fr 64px max-content;
-  align-items: center;
+  display: flex !important;
+  flex-wrap: nowrap !important;  /* ❗ ніколи не переносити */
+  align-items: center !important;
 }
 
 /* чекбокс */
 .addon-row .input-group-text:first-child{
+  flex: 0 0 40px;
   width: 40px;
   justify-content: center;
   padding: 4px 6px;
 }
 
-/* назва — НЕ переноситься */
+/* назва — НЕ переноситься, обрізається ... */
 .addon-row .addon-name{
-  min-width: 0;
-  white-space: nowrap;        /* ❗ ЗАБОРОНА ПЕРЕНОСУ */
+  flex: 1 1 auto;
+  min-width: 0;                 /* важливо для ellipsis */
+  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;    /* ... якщо не влазить */
+  text-overflow: ellipsis;
   padding: 4px 8px;
 }
 
-/* поле кількості — максимум 3 цифри */
+/* qty — рівно під 3 цифри */
 .addon-row .addon-qty{
+  flex: 0 0 64px;
   width: 64px !important;
   min-width: 64px !important;
   max-width: 64px !important;
@@ -1174,8 +1175,9 @@ body.preview-only #sketchHidePart{
   padding: 2px 4px;
 }
 
-/* к/с */
+/* к/с — завжди в один рядок */
 .addon-row .addon-ks{
+  flex: 0 0 auto;
   white-space: nowrap;
   padding: 4px 8px;
 }
