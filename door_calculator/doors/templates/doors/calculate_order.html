@@ -3305,9 +3305,15 @@ document.addEventListener("click", function(e){
     // Kз = max(0, Xет - Xзм) * Kт/з + Bф/ет
     function getKz(sFill, n) {
       if (sFill <= 0 || n <= 0) return { xavg: 0, kz: 0 };
+
       const xavg = sFill / n;
-      const diff = Math.max(0, X_ET - xavg);
-      const kz = diff * K_TZ + B_F_ET;
+
+      const diff = (X_ET - xavg);   // БЕЗ Math.max
+      let kz = diff * K_TZ + B_F_ET;
+
+      // мінімальний захист щоб не піти в мінус
+      kz = Math.max(0.01, kz);
+
       return { xavg, kz };
     }
 
