@@ -14,7 +14,7 @@
       </div>
       <div class="col-md-4">
         <label class="form-label fw-bold">Кількість позицій</label>
-        <input type="number" name="quantity" min="1" class="form-control" value="{{ item.quantity }}">
+        <input type="number" name="quantity" min="0" class="form-control" value="{{ product_qty.p.id|default:1 }}"">
       </div>
     </div>
 
@@ -42,8 +42,8 @@
               </small>
             </span>
 
-            <input type="number" class="form-control" name="prod_qty_{{ p.id }}" min="0.01" step="0.01"
-                   value="{{ product_qty|get_item:p.id|default:1 }}">
+            <input type="number" class="form-control" name="prod_qty_{{ p.id }}" min="0" step="0.01"
+                   value="{{ product_qty|get_item:p.id|stringformat:'s'|default_if_none:1 }}">
             <span class="input-group-text">шт</span>
           </div>
           {% empty %}
@@ -76,11 +76,11 @@
       <div class="input-group input-group-sm mb-2">
         <div class="input-group-text">
           <input type="checkbox" class="form-check-input mt-0" name="additions" value="{{ a.id }}"
-                 {% if a.id in addition_qty %}checked{% endif %}>
+                 {% if addition_qty|get_item:a.id %}checked{% endif %}
         </div>
         <span class="input-group-text w-50">{{ a.name }}</span>
-        <input type="number" class="form-control" name="add_qty_{{ a.id }}" min="1"
-               value="{{ addition_qty|get_item:a.id|default:1 }}">
+        <input type="number" class="form-control" name="add_qty_{{ a.id }}" min="0"
+               value="{{ addition_qty|get_item:a.id|stringformat:'s'|default_if_none:1 }}">
         <span class="input-group-text">{{ a.ks_value }} к/с</span>
       </div>
       {% empty %}

@@ -1992,8 +1992,12 @@ def order_item_edit(request, item_id):
     if request.method == "POST":
         # базові поля
         item.name = request.POST.get("name") or item.name
-        item.quantity = _to_decimal_or_one(request.POST.get("quantity", item.quantity))
-
+        qty_raw = request.POST.get("quantity", None)
+        if _is_missing(qty_raw):
+            # якщо не прийшло/пусто — не чіпаємо
+            pass
+        else:
+            item.quantity = _to_decimal_or_one(qty_raw)
         # =========================
         # ВИРОБИ з кількістю (OrderItemProduct)
         # =========================
