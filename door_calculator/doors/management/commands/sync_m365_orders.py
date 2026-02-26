@@ -64,6 +64,19 @@ def make_order_number(folder_id: str) -> str:
     return h
 
 
+# ✅ NEW: helpers for detecting remote changes (won't break if fields don't exist)
+def _get_remote_etag(it: dict) -> str:
+    # Graph може віддавати eTag або @microsoft.graph.etag
+    val = it.get("eTag") or it.get("@microsoft.graph.etag") or ""
+    return (str(val)[:255]) if val else ""
+
+
+def _get_remote_last_modified(it: dict) -> str:
+    # Часто lastModifiedDateTime є на верхньому рівні або в fileSystemInfo
+    fs = it.get("fileSystemInfo") or {}
+    return it.get("lastModifiedDateTime") or fs.get("lastModifiedDateTime") or ""
+
+
 # -------- folder pickers (single / all) --------
 
 def pick_child_folder_contains(drive_id: str, parent_id: str, needle: str):
@@ -422,10 +435,47 @@ class Command(BaseCommand):
                                             remote_drive_id=drive_id,
                                             remote_item_id=remote_item_id,
                                         ).first()
+
                                         if existing:
+                                            update_fields = []
+                                            changed = False
+
                                             if existing.order_id != order.id:
                                                 existing.order = order
-                                                existing.save(update_fields=["order"])
+                                                changed = True
+                                                update_fields.append("order")
+
+                                            if getattr(existing, "remote_name", None) != file_name:
+                                                existing.remote_name = file_name
+                                                changed = True
+                                                update_fields.append("remote_name")
+
+                                            if getattr(existing, "remote_size", None) != size:
+                                                existing.remote_size = size
+                                                changed = True
+                                                update_fields.append("remote_size")
+
+                                            if getattr(existing, "remote_web_url", None) != web_url:
+                                                existing.remote_web_url = web_url
+                                                changed = True
+                                                update_fields.append("remote_web_url")
+
+                                            # опційно, якщо поля існують у моделі
+                                            etag = _get_remote_etag(it)
+                                            if hasattr(existing, "remote_etag") and existing.remote_etag != etag:
+                                                existing.remote_etag = etag
+                                                changed = True
+                                                update_fields.append("remote_etag")
+
+                                            lm = _get_remote_last_modified(it)
+                                            if hasattr(existing, "remote_last_modified") and existing.remote_last_modified != lm:
+                                                existing.remote_last_modified = lm
+                                                changed = True
+                                                update_fields.append("remote_last_modified")
+
+                                            if changed:
+                                                existing.save(update_fields=update_fields)
+
                                             continue
 
                                         OrderImage.objects.create(
@@ -436,8 +486,13 @@ class Command(BaseCommand):
                                             remote_web_url=web_url,
                                             remote_name=file_name,
                                             remote_size=size,
+                                            # якщо у моделі є поля — можна додати,
+                                            # але ми НЕ додаємо тут, щоб нічого не поламати.
+                                            # remote_etag=_get_remote_etag(it),
+                                            # remote_last_modified=_get_remote_last_modified(it),
                                         )
                                         created_images += 1
+
                                     else:
                                         seen_file_ids.add(remote_item_id)
 
@@ -445,10 +500,53 @@ class Command(BaseCommand):
                                             remote_drive_id=drive_id,
                                             remote_item_id=remote_item_id,
                                         ).first()
+
                                         if existing_f:
+                                            update_fields = []
+                                            changed = False
+
                                             if existing_f.order_id != order.id:
                                                 existing_f.order = order
-                                                existing_f.save(update_fields=["order"])
+                                                changed = True
+                                                update_fields.append("order")
+
+                                            if getattr(existing_f, "remote_name", None) != file_name:
+                                                existing_f.remote_name = file_name
+                                                changed = True
+                                                update_fields.append("remote_name")
+
+                                            if getattr(existing_f, "remote_size", None) != size:
+                                                existing_f.remote_size = size
+                                                changed = True
+                                                update_fields.append("remote_size")
+
+                                            if getattr(existing_f, "remote_web_url", None) != web_url:
+                                                existing_f.remote_web_url = web_url
+                                                changed = True
+                                                update_fields.append("remote_web_url")
+
+                                            # description у тебе = file_name при створенні — тримаємо актуальним
+                                            if getattr(existing_f, "description", None) and existing_f.description != file_name:
+                                                existing_f.description = file_name
+                                                changed = True
+                                                update_fields.append("description")
+
+                                            # опційно, якщо поля існують у моделі
+                                            etag = _get_remote_etag(it)
+                                            if hasattr(existing_f, "remote_etag") and existing_f.remote_etag != etag:
+                                                existing_f.remote_etag = etag
+                                                changed = True
+                                                update_fields.append("remote_etag")
+
+                                            lm = _get_remote_last_modified(it)
+                                            if hasattr(existing_f, "remote_last_modified") and existing_f.remote_last_modified != lm:
+                                                existing_f.remote_last_modified = lm
+                                                changed = True
+                                                update_fields.append("remote_last_modified")
+
+                                            if changed:
+                                                existing_f.save(update_fields=update_fields)
+
                                             continue
 
                                         OrderFile.objects.create(
