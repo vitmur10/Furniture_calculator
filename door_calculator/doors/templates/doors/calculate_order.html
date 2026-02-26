@@ -1190,6 +1190,11 @@ body.preview-only #sketchHidePart{
   white-space: nowrap;
   padding: 4px 8px;
 }
+.item-name {
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
 </style>
 
 
@@ -2257,12 +2262,14 @@ body.preview-only #sketchHidePart{
                   </td>
 
                   <!-- Назва позиції -->
-                  <td>
+                <td class="text-start">
+                  <div class="item-name">
                     {{ i.name }}
-                    {% if i.quantity > 1 %}
-                      <span class="badge bg-light text-dark ms-1">× {{ i.quantity }}</span>
-                    {% endif %}
-                  </td>
+                  </div>
+                  {% if i.quantity > 1 %}
+                    <span class="badge bg-light text-dark ms-1">× {{ i.quantity }}</span>
+                  {% endif %}
+                </td>
 
                   <!-- 🔥 К/С повний розрахунок -->
                     <td class="text-start">
