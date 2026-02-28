@@ -2149,7 +2149,17 @@ body.preview-only #sketchHidePart{
     </div>
 
   </div>
-</div>      <div class="text-center mb-4">
+</div>
+        <div class="mb-2">
+          <label class="form-label fw-bold">Прикріпити до (зробити підпунктом)</label>
+          <select class="form-select form-select-sm" name="attach_parent_id">
+            <option value="">— не прикріплювати —</option>
+            {% for p in parents %}
+              <option value="{{ p.id }}">{{ forloop.counter }}. {{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="text-center mb-4">
         <button type="submit" class="btn btn-danger w-100 py-2">➕ Додати конструкцію</button>
       </div>
     </form>
@@ -2231,8 +2241,8 @@ body.preview-only #sketchHidePart{
   </div>
 </div>
     {% if items %}
-      <div class="summary-table">
-        <table class="table table-bordered text-center align-middle mb-0">
+        <div class="summary-table">
+          <table class="table table-bordered text-center align-middle mb-0">
             <thead>
               <tr>
                 <th>№</th>
@@ -2247,8 +2257,9 @@ body.preview-only #sketchHidePart{
                 </th>
               </tr>
             </thead>
-          <tbody>
-            {% for i in items %}
+
+            <tbody>
+                {% for i, kids in parents_with_children %}                {# ====== PARENT ROW ====== #}
                 <tr>
                   <!-- № -->
                   <td class="fw-bold">{{ forloop.counter }}</td>
@@ -2265,22 +2276,21 @@ body.preview-only #sketchHidePart{
                   </td>
 
                   <!-- Назва позиції -->
-                <td class="text-start">
-                  <div class="item-name">
-                    {{ i.name }}
-                  </div>
-                  {% if i.quantity > 1 %}
-                    <span class="badge bg-light text-dark ms-1">× {{ i.quantity }}</span>
-                  {% endif %}
-                </td>
+                  <td class="text-start">
+                    <div class="item-name">
+                      {{ i.name }}
+                    </div>
+                    {% if i.quantity > 1 %}
+                      <span class="badge bg-light text-dark ms-1">× {{ i.quantity }}</span>
+                    {% endif %}
+                  </td>
 
                   <!-- 🔥 К/С повний розрахунок -->
-                    <td class="text-start">
-                  <span class="ks-tooltip" data-tooltip="{{ i.ks_tooltip }}">
-                    {{ i.ks_formula }} =
-                    <strong>{{ i.ks_effective|floatformat:2 }}</strong> к/с
-                  </span>
-                </td>
+                  <td class="text-start">
+                    <span class="ks-tooltip" data-tooltip="{{ i.ks_tooltip }}">
+                      {{ i.ks_formula }} =
+                      <strong>{{ i.ks_effective|floatformat:2 }}</strong> к/с
+                    </span>
                   </td>
 
                   <!-- Ціна -->
@@ -2289,36 +2299,125 @@ body.preview-only #sketchHidePart{
                   </td>
 
                   <!-- Дія -->
-                  <td>
+                  <td class="d-flex gap-1">
                     <a href="{% url 'order_item_edit' i.id %}"
                        class="btn btn-sm btn-outline-secondary">
-                       ✏️
+                      ✏️
                     </a>
+
+                    <form method="post" action="{% url 'calculate_order' order.id %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="copy_item_id" value="{{ i.id }}">
+                      <button type="submit" name="copy_item" class="btn btn-sm btn-outline-primary">
+                        📋
+                      </button>
+                    </form>
                   </td>
+
+                  <td style="width:110px;">
+                    <input type="number" step="0.01"
+                           class="form-control form-control-sm"
+                           style="width:90px; margin:0 auto;"
+                           name="item_markup_{{ i.id }}"
+                           value="{{ i.markup_percent|default_if_none:'' }}"
+                           form="saveMarkupForm">
+                    <div class="small text-muted">
+                      зараз: {{ i.effective_markup_percent|default:"" }}
+                    </div>
+                  </td>
+
+                  <td style="width:40px;">
+                    <input type="checkbox"
+                           class="form-check-input item-select"
+                           name="selected_item_ids"
+                           value="{{ i.id }}"
+                           form="bulkCoeffsForm">
+                  </td>
+                </tr>
+
+                {# ====== CHILD ROWS (attached items) ====== #}
+                {% for ch in kids %}
+                  <tr class="table-light">
+                    <!-- № -->
+                    <td class="fw-bold">{{ forloop.parentloop.counter }}.{{ forloop.counter }}</td>
+
+                    <!-- Фото -->
+                    <td>
+                      {% with first_product=ch.products.all|first %}
+                        {% if first_product and first_product.image %}
+                          <img src="{{ first_product.image.url }}" alt="{{ first_product.name }}">
+                        {% else %}
+                          <img src="https://via.placeholder.com/50x50?text=No+Img">
+                        {% endif %}
+                      {% endwith %}
+                    </td>
+
+                    <!-- Назва позиції -->
+                    <td class="text-start">
+                      <div class="item-name" style="padding-left:18px;">
+                        ↳ {{ ch.name }}
+                      </div>
+                      {% if ch.quantity > 1 %}
+                        <span class="badge bg-light text-dark ms-1">× {{ ch.quantity }}</span>
+                      {% endif %}
+                    </td>
+
+                    <!-- 🔥 К/С повний розрахунок -->
+                    <td class="text-start">
+                      <span class="ks-tooltip" data-tooltip="{{ ch.ks_tooltip }}">
+                        {{ ch.ks_formula }} =
+                        <strong>{{ ch.ks_effective|floatformat:2 }}</strong> к/с
+                      </span>
+                    </td>
+
+                    <!-- Ціна -->
+                    <td class="fw-bold text-success">
+                      {{ ch.total_cost_value|floatformat:2 }} грн
+                    </td>
+
+                    <!-- Дія -->
+                    <td class="d-flex gap-1">
+                      <a href="{% url 'order_item_edit' ch.id %}"
+                         class="btn btn-sm btn-outline-secondary">
+                        ✏️
+                      </a>
+
+                      <form method="post" action="{% url 'calculate_order' order.id %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="copy_item_id" value="{{ ch.id }}">
+                        <button type="submit" name="copy_item" class="btn btn-sm btn-outline-primary">
+                          📋
+                        </button>
+                      </form>
+                    </td>
+
                     <td style="width:110px;">
                       <input type="number" step="0.01"
                              class="form-control form-control-sm"
                              style="width:90px; margin:0 auto;"
-                             name="item_markup_{{ i.id }}"
-                             value="{{ i.markup_percent|default_if_none:'' }}"
+                             name="item_markup_{{ ch.id }}"
+                             value="{{ ch.markup_percent|default_if_none:'' }}"
                              form="saveMarkupForm">
                       <div class="small text-muted">
-                        зараз: {{ i.effective_markup_percent|default:"" }}
+                        зараз: {{ ch.effective_markup_percent|default:"" }}
                       </div>
                     </td>
+
                     <td style="width:40px;">
                       <input type="checkbox"
                              class="form-check-input item-select"
                              name="selected_item_ids"
-                             value="{{ i.id }}"
+                             value="{{ ch.id }}"
                              form="bulkCoeffsForm">
                     </td>
-                </tr>
+                  </tr>
                 {% endfor %}
-          </tbody>
-        </table>
-      </div>
-                {% if request.user.is_superuser %}
+
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if request.user.is_superuser %}
     <div class="card shadow-sm my-4" style="border-left: 6px solid #28a745;">
         <div class="card-body">
             <h4 class="text-success fw-bold mb-3">

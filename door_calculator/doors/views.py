@@ -426,6 +426,69 @@ def calculate_order(request, order_id):
         return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
+    # POST: attach/detach item (make item a "child" of another item)
+    # ============================================================
+    if request.method == "POST" and "attach_item" in request.POST:
+        item_id = request.POST.get("attach_item_id")
+        parent_id = request.POST.get("attach_parent_id") or None
+
+        item = get_object_or_404(OrderItem, id=item_id, order=order)
+
+        if parent_id:
+            parent = get_object_or_404(OrderItem, id=parent_id, order=order)
+            # safety: cannot attach to itself
+            if parent.id == item.id:
+                parent = None
+        else:
+            parent = None
+
+        item.attached_to = parent
+        item.save(update_fields=["attached_to"])
+        return redirect("calculate_order", order_id=order.id)
+
+    # ============================================================
+    # POST: copy item (duplicate existing position inside same order)
+    # ============================================================
+    if request.method == "POST" and "copy_item" in request.POST:
+        src_id = request.POST.get("copy_item_id")
+        src = get_object_or_404(OrderItem, id=src_id, order=order)
+
+        # 1) create new item
+        new_item = OrderItem.objects.create(
+            order=order,
+            name=f"{src.name} (копія)",
+            quantity=src.quantity,
+            attached_to=src.attached_to,
+        )
+
+        # якщо є націнка на позиції — копіюємо
+        if hasattr(src, "markup_percent"):
+            new_item.markup_percent = src.markup_percent
+            new_item.save(update_fields=["markup_percent"])
+
+        # 2) copy coefficients (m2m)
+        new_item.coefficients.set(src.coefficients.all())
+
+        # 3) copy products (OrderItemProduct)
+        for pi in src.product_items.all():
+            OrderItemProduct.objects.create(
+                order_item=new_item,
+                product_id=pi.product_id,
+                quantity=pi.quantity,
+            )
+
+        # 4) copy additions (AdditionItem)
+        for ai in src.addition_items.all():
+            AdditionItem.objects.create(
+                order_item=new_item,
+                addition_id=ai.addition_id,
+                quantity=ai.quantity,
+            )
+
+        _recalc_order_totals(order)
+        return redirect("calculate_order", order_id=order.id)
+
+    # ============================================================
     # POST: add item
     # ============================================================
     if request.method == "POST" and all(
@@ -438,6 +501,8 @@ def calculate_order(request, order_id):
                 "assign_customer",
                 "save_markup",
                 "bulk_coefficients",
+                "copy_item",
+                "attach_item",
             ]
     ):
         order_name = (request.POST.get("order_name") or "").strip()
@@ -475,7 +540,18 @@ def calculate_order(request, order_id):
         selected_coefs = request.POST.getlist("coefficients")
 
         # --- Create item (position) ---
-        item = OrderItem.objects.create(order=order, name=name, quantity=item_qty)
+        attach_parent_id = request.POST.get("attach_parent_id") or None
+        attached_to = None
+        if attach_parent_id:
+            attached_to = OrderItem.objects.filter(id=attach_parent_id, order=order).first()
+
+        # --- Create item (position) ---
+        item = OrderItem.objects.create(
+            order=order,
+            name=name,
+            quantity=item_qty,
+            attached_to=attached_to,
+        )
 
         # ============================================================
         # FACADE MODE (methodology): add as KS carrier, no saving as separate products
@@ -551,7 +627,17 @@ def calculate_order(request, order_id):
         "coefficients",
         "addition_items__addition",
         "product_items__product",
-    )
+        "attached_items",
+    ).select_related("attached_to")
+
+    # NEW: build parent->children map for "subitems" numbering in template
+    parents = [it for it in items if it.attached_to_id is None]
+    children_map = {}
+    for it in items:
+        if it.attached_to_id:
+            children_map.setdefault(it.attached_to_id, []).append(it)
+    for pid, ch_list in children_map.items():
+        ch_list.sort(key=lambda x: x.id)
 
     effective_ks = Decimal("0.00")
     total_sum = Decimal("0.00")
@@ -655,6 +741,12 @@ def calculate_order(request, order_id):
             f"{tail}"
         )
 
+    # ===== NEW: use SAME computed instances for children rendering (fix blank ks/price in subitems) =====
+    parents_with_children = []
+    for p in parents:
+        kids = children_map.get(p.id, [])
+        parents_with_children.append((p, kids))
+
     effective_ks = _q2(effective_ks)
     total_sum = _q2(total_sum)
     formula_expression = " + ".join(formula_terms) if formula_terms else "0.00"
@@ -708,6 +800,9 @@ def calculate_order(request, order_id):
 
         "rate": price_per_ks,
         "items": items,
+        "parents": parents,
+        "children_map": children_map,
+        "parents_with_children": parents_with_children,
         "total": total_sum,
         "customers": customers,
         "markers_by_image": markers_by_image,
@@ -716,8 +811,6 @@ def calculate_order(request, order_id):
         "order_name_templates": order_name_templates,
     }
     return render(request, "doors/calculate_order.html", context)
-
-
 def _draw_common_header(p, width, height, company, base_font):
     """
     Спільна шапка: логотип + реквізити.

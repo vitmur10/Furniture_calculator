@@ -347,6 +347,15 @@ class OrderItem(models.Model):
         blank=True,
         help_text="Якщо задано — перекриває націнку замовлення",
     )
+    attached_to = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="attached_items",
+        verbose_name="Прикріплено до",
+        help_text="Якщо задано — позиція буде показана як підпункт (1.1, 1.2...)"
+    )
 
     def effective_markup_percent(self) -> Decimal:
         """
