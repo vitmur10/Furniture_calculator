@@ -164,19 +164,22 @@
     cursor: grabbing;
   }
 
-  .main-image-wrapper {
+.main-image-wrapper {
     width: 100%;
-    height: 380px;
+    height: 65vh;              /* було 50vh */
+    min-height: 480px;         /* щоб на великих екранах було красиво */
+    max-height: 85vh;          /* щоб не з'їдало все */
+
     border-radius: 12px;
-    box-shadow: 0 0 25px rgba(0,0,0,0.3);
+    box-shadow: 0 0 25px rgba(0,0,0,0.25);
     overflow: hidden;
     position: relative;
     background: #111;
+
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: grab;
-  }
+}
 
   .main-image-inner {
     position: relative;
