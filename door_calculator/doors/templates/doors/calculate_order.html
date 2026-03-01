@@ -1446,7 +1446,7 @@ body.preview-only #sketchHidePart{
         {% endif %}
     </div>
 
-    <form method="post">
+    <form method="post" id="addItemForm">
       {% csrf_token %}
       <input type="hidden" name="calc_mode" id="calcMode" value="products">
       <input type="hidden" name="facade_total_cost" id="facadeTotalCost" value="">
@@ -2240,6 +2240,7 @@ body.preview-only #sketchHidePart{
     </form>
   </div>
 </div>
+    <div id="itemsBlock">
     {% if items %}
         <div class="summary-table">
           <table class="table table-bordered text-center align-middle mb-0">
@@ -2272,6 +2273,7 @@ body.preview-only #sketchHidePart{
                       {% else %}
                         <img src="https://via.placeholder.com/50x50?text=No+Img">
                       {% endif %}
+    </div>
                     {% endwith %}
                   </td>
 
@@ -3497,5 +3499,41 @@ document.addEventListener("click", function(e){
     recalcFacade();
   })();
 </script>
+<script>
+document.addEventListener("submit", async (e) => {
+  const form = e.target;
+  // Тут підлаштуй селектор під твою форму "Додати позицію"
+  // Напр.: form.id === "addItemForm" або form.querySelector('button[name="add_item"]')
+  if (!form.matches("#addItemForm")) return;
 
+  e.preventDefault();
+
+  const fd = new FormData(form);
+
+  const resp = await fetch(form.action || window.location.href, {
+    method: "POST",
+    body: fd,
+    headers: {
+      "X-Requested-With": "XMLHttpRequest",
+    },
+    credentials: "same-origin",
+  });
+
+  if (!resp.ok) {
+    // якщо сервер повернув html (помилка) — можна просто зробити fallback:
+    window.location.reload();
+    return;
+  }
+
+  const data = await resp.json();
+  if (!data.ok) return;
+
+  const block = document.getElementById("itemsBlock");
+  if (block && data.items_html) {
+    block.innerHTML = data.items_html;
+  }
+
+  // НІЧОГО не чіпаємо зліва => preview/iframe не закриється
+});
+</script>
 {% endblock %}

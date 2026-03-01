@@ -40,7 +40,7 @@ import logging
 from math import ceil
 from decimal import Decimal, ROUND_HALF_UP
 from django.shortcuts import get_object_or_404, redirect, render
-
+from django.template.loader import render_to_string
 logger = logging.getLogger(__name__)
 
 
@@ -297,6 +297,8 @@ def get_item_color(item_id: int | None) -> str:
 def calculate_order(request, order_id):
     order = get_object_or_404(Order, id=order_id)
 
+    ajax_partial = False  # if True, return JSON with updated items table
+
     categories = Category.objects.prefetch_related("products").all()
     products = Product.objects.all().select_related("category")
     images = order.images.all()
@@ -403,7 +405,15 @@ def calculate_order(request, order_id):
 
         _recalc_order_totals(order)
         order.refresh_from_db()
+        is_ajax = request.headers.get("x-requested-with") == "XMLHttpRequest"
+        if is_ajax:
+            # ВАЖЛИВО: partial використовує parents_with_children + пораховані поля (ks_formula, ks_tooltip, total_cost_value)
+            # Тому треба виконати той самий "GET: prepare" розрахунок перед рендером partial.
+            # Найкраще — винести "GET: prepare" у helper і викликати тут.
 
+            ctx = build_calculate_context(request, order)  # <-- зробимо нижче
+            html = render_to_string("doors/partials/order_items.html", ctx, request=request)
+            return JsonResponse({"ok": True, "items_html": html})
         return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
@@ -423,7 +433,11 @@ def calculate_order(request, order_id):
 
         _recalc_order_totals(order)
         order.refresh_from_db()
-        return redirect("calculate_order", order_id=order.id)
+
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            ajax_partial = True
+        else:
+            return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
     # POST: attach/detach item (make item a "child" of another item)
@@ -597,7 +611,11 @@ def calculate_order(request, order_id):
             # no additions/coeffs from products block in facade mode
             _recalc_order_totals(order)
             order.refresh_from_db()
-            return redirect("calculate_order", order_id=order.id)
+
+            if request.headers.get("x-requested-with") == "XMLHttpRequest":
+                ajax_partial = True
+            else:
+                return redirect("calculate_order", order_id=order.id)
 
         # ============================================================
         # PRODUCTS MODE (default): existing behavior
@@ -618,7 +636,11 @@ def calculate_order(request, order_id):
 
         _recalc_order_totals(order)
         order.refresh_from_db()
-        return redirect("calculate_order", order_id=order.id)
+
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            ajax_partial = True
+        else:
+            return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
     # GET: prepare
@@ -810,6 +832,10 @@ def calculate_order(request, order_id):
         "formula_expression": formula_expression,
         "order_name_templates": order_name_templates,
     }
+    if ajax_partial:
+        html = render_to_string("doors/partials/order_items.html", context, request=request)
+        return JsonResponse({"ok": True, "items_html": html})
+
     return render(request, "doors/calculate_order.html", context)
 def _draw_common_header(p, width, height, company, base_font):
     """
