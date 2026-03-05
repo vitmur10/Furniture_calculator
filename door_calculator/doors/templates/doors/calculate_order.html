@@ -3373,7 +3373,7 @@ document.addEventListener("click", function(e){
     const X_ET = 2.0;          // еталонна середня площа (м²)
     const K_TZ = 0.055;        // коеф. залежності трудовитрат
     const B_F_ET = 0.5;        // Bф/ет (кс) — базова трудомісткість еталону
-    const K_CURVE_FACTOR = 0.002;
+    const K_CURVE_FACTOR = 0.004;
     const CRACKER_RATE = 0.02; // кс/шт
     const SUPPORT_RATE = 0.15; // кс/шт
 
@@ -3411,11 +3411,10 @@ document.addEventListener("click", function(e){
 
       const xavg = sFill / n;
 
-      const diff = (X_ET - xavg);   // БЕЗ Math.max
-      let kz = diff * K_TZ + B_F_ET;
-
-      // мінімальний захист щоб не піти в мінус
-      kz = Math.max(0.01, kz);
+      // НОВЕ: Kz = Bф/ет * sqrt(Xет / Xзм)
+      // де Bф/ет = 0.5, Xет = 2
+      const ratio = (xavg > 0) ? (X_ET / xavg) : 0;
+      const kz = B_F_ET * Math.sqrt(Math.max(0, ratio));
 
       return { xavg, kz };
     }
