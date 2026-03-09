@@ -105,6 +105,7 @@
         <th>Виконано (%)</th>
         <th>Проблемні конструкції</th>
         <th>Коментар</th>
+        <th>Дії</th>
       </tr>
     </thead>
     <tbody>
@@ -128,6 +129,16 @@
           {% endwith %}
         </td>
         <td>{{ p.comment }}</td>
+      <td>
+      <form method="post"
+            action="{% url 'item_progress_delete' p.id %}"
+            onsubmit="return confirm('Точно видалити цей запис прогресу?');">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-sm btn-outline-danger">
+          🗑 Видалити
+        </button>
+      </form>
+    </td>
       </tr>
       {% endfor %}
     </tbody>

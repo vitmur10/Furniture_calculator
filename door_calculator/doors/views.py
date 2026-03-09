@@ -1602,7 +1602,10 @@ def worklog_list(request):
     # Підсумки годин по кожному працівнику
     totals = (
         logs.values("worker__name", "worker__position")
-        .annotate(total_hours=Sum("hours"))
+        .annotate(
+            total_hours=Sum("hours"),
+            work_hours=Sum("work_hours"),
+        )
         .order_by("worker__name")
     )
 
@@ -1617,6 +1620,23 @@ def worklog_list(request):
         "end_date": end_date,
     })
 
+
+@require_POST
+def worklog_delete(request, pk):
+    log = get_object_or_404(WorkLog, pk=pk)
+
+    worker_name = log.worker.name if log.worker else "—"
+    log_date = log.date.strftime("%d.%m.%Y") if log.date else "—"
+
+    log.delete()
+
+    messages.success(
+        request,
+        f"Запис робочого часу працівника {worker_name} за {log_date} видалено."
+    )
+
+    redirect_url = request.META.get("HTTP_REFERER")
+    return redirect(redirect_url if redirect_url else "worklog_list")
 
 def report_view(request):
     start_date_raw = request.GET.get("start_date")
@@ -1761,7 +1781,7 @@ def report_period_view(request):
     order_ids = progress_in_period_qs.values_list("order_id", flat=True).distinct()
     orders_qs = Order.objects.filter(id__in=order_ids).order_by("order_number")
 
-    orders = [{"number": o.order_number, "name": o.order_name} for o in orders_qs]
+    orders = [{"number": o.order_number, "name": o.order_name, "total_ks": o.total_ks} for o in orders_qs]
 
     # ----- СПИСОК ПРАЦІВНИКІВ (ID + name) -----
     workers = list(
@@ -1973,7 +1993,6 @@ def add_item_progress(request):
     Працюємо тільки із замовленнями в статусі "В роботі".
     """
 
-    # ✅ показуємо/оновлюємо тільки замовлення, які "В роботі"
     WORK_STATUS = "in_progress"
 
     order_id = request.GET.get("order") or request.POST.get("order_id")
@@ -1994,7 +2013,6 @@ def add_item_progress(request):
             progress.order = selected_order
             progress.save()
 
-            # 🔹 позиції, які неможливо виконати
             problem_ids = request.POST.getlist("problem_items")
             has_problems = False
 
@@ -2003,23 +2021,20 @@ def add_item_progress(request):
                     id__in=problem_ids,
                     order=selected_order,
                 )
-                # зберігаємо зв'язок у M2M, якщо є
+
                 if hasattr(progress, "problem_items"):
                     progress.problem_items.set(items_qs)
 
                 items_qs.update(status="impossible")
                 has_problems = items_qs.exists()
 
-            # 🔹 оновлюємо % у замовленні
             selected_order.completion_percent = progress.percent
             fields_to_update = ["completion_percent"]
 
-            # якщо є хоча б одна проблемна позиція — відкладаємо замовлення
             if has_problems:
                 selected_order.status = "postponed"
                 fields_to_update.append("status")
             else:
-                # немає проблем → якщо 100% — завершено
                 if progress.percent >= 100:
                     selected_order.status = "completed"
                     fields_to_update.append("status")
@@ -2036,7 +2051,6 @@ def add_item_progress(request):
     else:
         form = OrderProgressForm()
 
-    # 🔹 позиції для чекбоксів (тільки по вибраному замовленню)
     order_items_for_selection = (
         selected_order.items.all() if selected_order else OrderItem.objects.none()
     )
@@ -2044,10 +2058,10 @@ def add_item_progress(request):
     latest_progress = (
         OrderProgress.objects
         .select_related("order")
-        .order_by("-date")[:10]
+        .prefetch_related("problem_items")
+        .order_by("-date", "-id")[:10]
     )
 
-    # 🔹 у випадаючому списку — тільки замовлення "В роботі"
     all_orders = (
         Order.objects
         .filter(status=WORK_STATUS)
@@ -2065,6 +2079,66 @@ def add_item_progress(request):
             "all_orders": all_orders,
         },
     )
+
+
+@require_POST
+def delete_item_progress(request, pk):
+    """
+    Видаляє запис прогресу та перераховує стан замовлення.
+    """
+    progress = get_object_or_404(
+        OrderProgress.objects.select_related("order").prefetch_related("problem_items"),
+        pk=pk
+    )
+    order = progress.order
+
+    # id позицій, які були прив'язані до цього запису
+    deleted_problem_item_ids = list(progress.problem_items.values_list("id", flat=True))
+
+    progress.delete()
+
+    # Які позиції все ще позначені як проблемні в інших записах цього замовлення
+    remaining_problem_item_ids = set(
+        OrderProgress.objects.filter(order=order, problem_items__isnull=False)
+        .values_list("problem_items__id", flat=True)
+    )
+
+    # Ті позиції, які були проблемними тільки в видаленому записі — повертаємо назад
+    ids_to_restore = [
+        item_id for item_id in deleted_problem_item_ids
+        if item_id not in remaining_problem_item_ids
+    ]
+
+    if ids_to_restore:
+        # Якщо у вас інший "звичайний" статус позиції — заміни "new" на свій
+        OrderItem.objects.filter(id__in=ids_to_restore, order=order).update(status="new")
+
+    # Беремо останній актуальний запис прогресу
+    last_progress = (
+        OrderProgress.objects.filter(order=order)
+        .order_by("-date", "-id")
+        .first()
+    )
+
+    has_problems = bool(remaining_problem_item_ids)
+
+    if last_progress:
+        order.completion_percent = last_progress.percent
+
+        if has_problems:
+            order.status = "postponed"
+        elif last_progress.percent >= 100:
+            order.status = "completed"
+        else:
+            order.status = "in_progress"
+    else:
+        order.completion_percent = 0
+        order.status = "postponed" if has_problems else "in_progress"
+
+    order.save(update_fields=["completion_percent", "status"])
+
+    messages.success(request, f"Запис прогресу по замовленню №{order.order_number} видалено.")
+    return redirect(f"{request.META.get('HTTP_REFERER', '') or '/'}")
 
 
 def options_for_products(request):

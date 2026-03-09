@@ -35,45 +35,53 @@
   </form>
 
   <!-- Таблиця -->
-  <div class="table-responsive">
-    <table class="table table-bordered table-hover align-middle">
-      <thead class="table-primary">
-        <tr>
-          <th>Дата</th>
-          <th>Працівник</th>
-          <th>Посада</th>
-          <th>годин за день</th>
-          <th>ХОЗ години</th>  <!-- НОВЕ -->
-          <th>Коментар</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for log in logs %}
-        <tr>
-          <td>{{ log.date|date:"d.m.Y" }}</td>
-          <td>{{ log.worker.name }}</td>
-          <td>{{ log.worker.position|default:"—" }}</td>
-          <td>{{ log.hours|floatformat:2 }}</td>
-
-          <!-- НОВЕ -->
-          <td>
-            {% if log.work_hours %}
-              {{ log.work_hours|floatformat:2 }}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-
-          <td>{{ log.comment|default:"—" }}</td>
-        </tr>
-        {% empty %}
-        <tr>
-          <td colspan="6" class="text-center text-muted">Записів не знайдено</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+<div class="table-responsive">
+  <table class="table table-bordered table-hover align-middle">
+    <thead class="table-primary">
+      <tr>
+        <th>Дата</th>
+        <th>Працівник</th>
+        <th>Посада</th>
+        <th>годин за день</th>
+        <th>ХОЗ години</th>
+        <th>Коментар</th>
+        <th>Дії</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in logs %}
+      <tr>
+        <td>{{ log.date|date:"d.m.Y" }}</td>
+        <td>{{ log.worker.name }}</td>
+        <td>{{ log.worker.position|default:"—" }}</td>
+        <td>{{ log.hours|floatformat:2 }}</td>
+        <td>
+          {% if log.work_hours %}
+            {{ log.work_hours|floatformat:2 }}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>{{ log.comment|default:"—" }}</td>
+        <td>
+          <form method="post"
+                action="{% url 'worklog_delete' log.id %}"
+                onsubmit="return confirm('Точно видалити цей запис?');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-danger">
+              🗑 Видалити
+            </button>
+          </form>
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+        <td colspan="7" class="text-center text-muted">Записів не знайдено</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 
   <!-- Підсумки -->
   {% if totals %}
