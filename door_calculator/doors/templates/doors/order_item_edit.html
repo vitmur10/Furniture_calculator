@@ -70,23 +70,34 @@
 
     <hr class="my-4">
 
-    <h6 class="fw-bold mb-2">Доповнення (з кількістю)</h6>
-    <div class="border rounded p-2" style="max-height: 360px; overflow:auto;">
-      {% for a in addons %}
-      <div class="input-group input-group-sm mb-2">
-        <div class="input-group-text">
-          <input type="checkbox" class="form-check-input mt-0" name="additions" value="{{ a.id }}"
-                 {% if addition_qty|get_item:a.id %}checked{% endif %}
-        </div>
-        <span class="input-group-text w-50">{{ a.name }}</span>
-        <input type="number" class="form-control" name="add_qty_{{ a.id }}" min="0"
-               value="{{ addition_qty|get_item:a.id|stringformat:'s'|default_if_none:1 }}">
-        <span class="input-group-text">{{ a.ks_value }} к/с</span>
-      </div>
-      {% empty %}
-      <div class="text-muted small">Немає доповнень</div>
-      {% endfor %}
+<h6 class="fw-bold mb-2">Доповнення (з кількістю)</h6>
+<div class="border rounded p-2" style="max-height: 360px; overflow:auto;">
+  {% for a in addons %}
+  <div class="input-group input-group-sm mb-2 flex-nowrap">
+    <div class="input-group-text">
+      <input type="checkbox" class="form-check-input mt-0" name="additions" value="{{ a.id }}"
+             {% if addition_qty|get_item:a.id %}checked{% endif %}>
     </div>
+
+    <span class="input-group-text text-truncate" style="min-width: 280px; max-width: 280px;">
+      {{ a.name }}
+    </span>
+
+    <input type="number"
+           class="form-control"
+           name="add_qty_{{ a.id }}"
+           min="0"
+           style="max-width: 120px;"
+           value="{{ addition_qty|get_item:a.id|stringformat:'s'|default_if_none:1 }}">
+
+    <span class="input-group-text" style="min-width: 90px;">
+      {{ a.ks_value }} к/с
+    </span>
+  </div>
+  {% empty %}
+  <div class="text-muted small">Немає доповнень</div>
+  {% endfor %}
+</div>
 
     <div class="d-flex gap-2 mt-4">
       <a href="{% url 'calculate_order' order.id %}" class="btn btn-outline-secondary">⬅️ Повернутись</a>
