@@ -125,7 +125,7 @@
       <tbody class="text-center">
         {% for order in orders %}
 
-        <tr class="{% if order.status == 'completed' %}table-success{% elif order.status == 'postponed' %}table-warning{% endif %}">
+        <tr class="{% if order.status == 'completed' %}table-success{% elif order.status == 'postponed' %}table-warning{% elif order.status == 'in_work' %}table-danger{% endif %}">
           <td><strong>{{ order.order_number }}</strong></td>
 
           {# 🔹 Назва замовлення (NEW) #}

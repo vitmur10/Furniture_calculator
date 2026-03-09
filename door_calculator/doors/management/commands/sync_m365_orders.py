@@ -293,6 +293,7 @@ class Command(BaseCommand):
             created_images = 0
             deleted_files = 0
             deleted_images = 0
+            deleted_orders = 0
             skipped_root_folders_without_structure = 0
 
             for site_name in site_names:
@@ -319,6 +320,8 @@ class Command(BaseCommand):
                 project_candidates = [it for it in root_items if _is_folder(it)]
                 if limit > 0:
                     project_candidates = project_candidates[:limit]
+
+                current_root_folder_ids = {it["id"] for it in project_candidates}
 
                 self.stdout.write(self.style.NOTICE(f"Root folder candidates: {len(project_candidates)}"))
                 self.stdout.write(self.style.NOTICE(f"Detected work_type: {work_type}"))
@@ -580,11 +583,34 @@ class Command(BaseCommand):
                             di, _ = qi.delete()
                         deleted_images += di
 
+                # ✅ NEW: видаляємо локальні orders, яких вже немає в M365
+                # Робимо це тільки якщо sync без limit і root_items не пустий,
+                # щоб випадково не видалити все при частковому або збійному проході.
+                if limit == 0 and root_items:
+                    stale_orders_qs = Order.objects.filter(
+                        source="m365",
+                        remote_site_id=site["id"],
+                        remote_drive_id=drive_id,
+                    ).exclude(remote_folder_id__in=current_root_folder_ids)
+
+                    stale_orders = list(stale_orders_qs)
+                    for stale_order in stale_orders:
+                        self.stdout.write(self.style.WARNING(
+                            f"Deleting stale order: {stale_order.order_number} / {stale_order.order_name}"
+                        ))
+                        stale_order.delete()
+                        deleted_orders += 1
+                elif limit == 0 and not root_items:
+                    self.stdout.write(self.style.WARNING(
+                        f"Skip stale order deletion for site '{site_name}' because root_items is empty"
+                    ))
+
             self.stdout.write(self.style.SUCCESS(
                 "Done. "
                 f"created_orders={created_orders}, updated_orders={updated_orders}, "
                 f"created_images={created_images}, created_files={created_files}, "
                 f"deleted_images={deleted_images}, deleted_files={deleted_files}, "
+                f"deleted_orders={deleted_orders}, "
                 f"skipped_root_folders_without_structure={skipped_root_folders_without_structure}"
             ))
 
