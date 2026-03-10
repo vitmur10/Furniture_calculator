@@ -3,7 +3,6 @@
 {% block content %}
 <div class="container py-4">
   <h4 class="fw-bold mb-3">✏️ Редагування позиції — №{{ order.order_number }}</h4>
-
   <form method="post" class="card p-4 shadow-sm">
     {% csrf_token %}
 
@@ -17,7 +16,125 @@
         <input type="number" name="quantity" min="0" class="form-control" value="{{ product_qty.p.id|default:1 }}"">
       </div>
     </div>
+    {% if is_facade_item %}
+<hr class="my-4">
 
+<input type="hidden" name="facade_total_ks" id="facadeTotalKs" value="{{ facade_total_ks|default_if_none:'' }}">
+<input type="hidden" name="facade_data_json" id="facade_data_json" value='{{ facade_data_json|default_if_none:"" }}'>
+
+<div class="alert alert-info mb-3">
+  Це фасадна позиція. Тут можна змінити параметри фасаду і перерахувати к/с.
+</div>
+
+<div class="row g-3">
+  <div class="col-md-3">
+    <label class="form-label">S конструкції (м²)</label>
+    <input type="number" step="0.01" min="0"
+           class="form-control"
+           id="facadeSConstruction"
+           value="{{ facade.sConstr|default_if_none:'' }}">
+  </div>
+
+  <div class="col-md-3">
+    <label class="form-label">S заповнення Sз (м²)</label>
+    <input type="number" step="0.01" min="0"
+           class="form-control"
+           id="facadeSFill"
+           value="{{ facade.sFill|default_if_none:'' }}">
+  </div>
+
+  <div class="col-md-3">
+    <label class="form-label">К-сть елементів N (шт)</label>
+    <input type="number" step="1" min="1"
+           class="form-control"
+           id="facadeElements"
+           value="{{ facade.n|default_if_none:'' }}">
+  </div>
+
+  <div class="col-md-3">
+    <label class="form-label">S криволінійне (м²)</label>
+    <input type="number" step="0.01" min="0"
+           class="form-control"
+           id="facadeSCurve"
+           value="{{ facade.sCurve|default_if_none:'' }}">
+  </div>
+</div>
+
+<div class="row g-3 mt-2">
+  <div class="col-md-6">
+    <label class="form-label">Армування</label>
+    <select class="form-select" id="facadeReinforcement">
+      <option value="none" {% if facade.reinforcement == "none" or not facade.reinforcement %}selected{% endif %}>Немає</option>
+      <option value="rack" {% if facade.reinforcement == "rack" %}selected{% endif %}>Армування стійки (×1.15)</option>
+      <option value="rack_rigel" {% if facade.reinforcement == "rack_rigel" %}selected{% endif %}>Армування стійки + ригеля (×1.3)</option>
+    </select>
+  </div>
+
+  <div class="col-md-6">
+    <label class="form-label">Особливості</label>
+    <select class="form-select" id="facadeFeature">
+      <option value="" {% if not facade.feature %}selected{% endif %}>Немає</option>
+      <option value="sloped" {% if facade.feature == "sloped" %}selected{% endif %}>Нахил 1–2 скати (×1.2)</option>
+      <option value="breaks" {% if facade.feature == "breaks" %}selected{% endif %}>Переломи 3–4 скати (×3)</option>
+      <option value="structural" {% if facade.feature == "structural" %}selected{% endif %}>Структурне скління (×0.9)</option>
+    </select>
+  </div>
+</div>
+
+<div class="row g-3 mt-2">
+  <div class="col-md-3">
+    <label class="form-label">Сухарі (шт)</label>
+    <input type="number" step="1" min="0"
+           class="form-control"
+           id="facadeCrackers"
+           value="{{ facade.crackers|default_if_none:'0' }}">
+  </div>
+
+  <div class="col-md-3">
+    <label class="form-label">Опори/кронштейни (шт)</label>
+    <input type="number" step="1" min="0"
+           class="form-control"
+           id="facadeSupports"
+           value="{{ facade.supports|default_if_none:'0' }}">
+  </div>
+
+  <div class="col-md-6">
+    <label class="form-label">Підсумок фасаду (к/с)</label>
+    <input type="text" class="form-control fw-bold" id="facadeTotalCostView" readonly>
+  </div>
+</div>
+
+<div class="row g-3 mt-2">
+  <div class="col-md-3">
+    <label class="form-label">Xзм</label>
+    <input type="text" class="form-control" id="facadeXavg" readonly>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Криволінійність %</label>
+    <input type="text" class="form-control" id="facadeCurvePercent" readonly>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Kкрив</label>
+    <input type="text" class="form-control" id="facadeKCurve" readonly>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Kконстр</label>
+    <input type="text" class="form-control" id="facadeKFlags" readonly>
+  </div>
+</div>
+
+<div class="row g-3 mt-2">
+  <div class="col-md-3">
+    <label class="form-label">Kз</label>
+    <input type="text" class="form-control" id="facadeBaseCost" readonly>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Доповнення</label>
+    <input type="text" class="form-control" id="facadeExtrasCost" readonly>
+  </div>
+</div>
+{% endif %}
+  {% if not is_facade_item %}
     <hr class="my-4">
 
     <div class="row">
@@ -98,7 +215,7 @@
   <div class="text-muted small">Немає доповнень</div>
   {% endfor %}
 </div>
-
+{% endif %}
     <div class="d-flex gap-2 mt-4">
       <a href="{% url 'calculate_order' order.id %}" class="btn btn-outline-secondary">⬅️ Повернутись</a>
       <button class="btn btn-primary">💾 Зберегти зміни</button>
@@ -107,4 +224,137 @@
     </div>
   </form>
 </div>
+    {% if is_facade_item %}
+<script>
+(function () {
+  const els = {
+    sConstr: document.getElementById("facadeSConstruction"),
+    sFill: document.getElementById("facadeSFill"),
+    n: document.getElementById("facadeElements"),
+    sCurve: document.getElementById("facadeSCurve"),
+    reinforcement: document.getElementById("facadeReinforcement"),
+    feature: document.getElementById("facadeFeature"),
+    crackers: document.getElementById("facadeCrackers"),
+    supports: document.getElementById("facadeSupports"),
+    xavg: document.getElementById("facadeXavg"),
+    curvePercent: document.getElementById("facadeCurvePercent"),
+    kCurve: document.getElementById("facadeKCurve"),
+    kFlags: document.getElementById("facadeKFlags"),
+    kzView: document.getElementById("facadeBaseCost"),
+    extrasCost: document.getElementById("facadeExtrasCost"),
+    totalView: document.getElementById("facadeTotalCostView"),
+    totalHiddenKs: document.getElementById("facadeTotalKs"),
+    facadeDataJson: document.getElementById("facade_data_json"),
+  };
+
+  const X_ET = 2.0;
+  const B_F_ET = 0.5;
+  const K_CURVE_FACTOR = 0.004;
+  const CRACKER_RATE = 0.02;
+  const SUPPORT_RATE = 0.15;
+
+  function num(v) {
+    const x = parseFloat(String(v ?? "").replace(",", "."));
+    return Number.isFinite(x) ? x : 0;
+  }
+
+  function clamp(v, a, b) {
+    return Math.max(a, Math.min(b, v));
+  }
+
+  function getKFlags() {
+    let k = 1.0;
+    const r = (els.reinforcement?.value || "none");
+    if (r === "rack") k *= 1.15;
+    if (r === "rack_rigel") k *= 1.3;
+    const f = (els.feature?.value || "");
+    if (f === "sloped") k *= 1.2;
+    if (f === "breaks") k *= 3.0;
+    if (f === "structural") k *= 0.9;
+    return k;
+  }
+
+  function getKCurve(sCurve, sFill) {
+    if (sFill <= 0) return { percent: 0, k: 1.0 };
+    const percent = clamp((sCurve / sFill) * 100.0, 0, 100);
+    const k = 1.0 + percent * K_CURVE_FACTOR;
+    return { percent, k };
+  }
+
+  function getKz(sFill, n) {
+    if (sFill <= 0 || n <= 0) return { xavg: 0, kz: 0 };
+    const xavg = sFill / n;
+    const ratio = (xavg > 0) ? (X_ET / xavg) : 0;
+    const kz = B_F_ET * Math.sqrt(Math.max(0, ratio));
+    return { xavg, kz };
+  }
+
+  function recalcFacade() {
+    const sConstr = num(els.sConstr.value);
+    const sFill = num(els.sFill.value);
+    const n = Math.max(1, Math.floor(num(els.n.value) || 0));
+
+    const sCurveRaw = num(els.sCurve.value);
+    const sCurve = clamp(sCurveRaw, 0, sFill > 0 ? sFill : sCurveRaw);
+    if (sFill > 0 && sCurveRaw !== sCurve) els.sCurve.value = String(sCurve);
+
+    const crackers = Math.max(0, Math.floor(num(els.crackers.value) || 0));
+    const supports = Math.max(0, Math.floor(num(els.supports.value) || 0));
+
+    const { xavg, kz } = getKz(sFill, n);
+    const curve = getKCurve(sCurve, sFill);
+    const kFlags = getKFlags();
+
+    const extrasKs = crackers * CRACKER_RATE + supports * SUPPORT_RATE;
+    const totalKs = (sConstr > 0 ? (sConstr * kz * curve.k * kFlags) : 0) + extrasKs;
+
+    els.xavg.value = xavg ? xavg.toFixed(3) : "";
+    els.curvePercent.value = curve.percent.toFixed(2);
+    els.kCurve.value = curve.k.toFixed(4);
+    els.kFlags.value = kFlags.toFixed(4);
+    if (els.kzView) els.kzView.value = kz ? kz.toFixed(4) : "";
+    els.extrasCost.value = extrasKs.toFixed(2);
+    els.totalView.value = totalKs ? totalKs.toFixed(3) : "";
+    els.totalHiddenKs.value = totalKs ? totalKs.toFixed(6) : "";
+
+    if (els.facadeDataJson) {
+      const facadeData = {
+        sConstr: sConstr,
+        sFill: sFill,
+        n: n,
+        sCurve: sCurve,
+        reinforcement: els.reinforcement?.value || "none",
+        feature: els.feature?.value || "",
+        crackers: crackers,
+        supports: supports,
+        xavg: xavg,
+        kz: kz,
+        curvePercent: curve.percent,
+        kCurve: curve.k,
+        kFlags: kFlags,
+        totalKs: totalKs
+      };
+      els.facadeDataJson.value = JSON.stringify(facadeData);
+    }
+  }
+
+  [
+    els.sConstr,
+    els.sFill,
+    els.n,
+    els.sCurve,
+    els.reinforcement,
+    els.feature,
+    els.crackers,
+    els.supports
+  ].forEach(el => {
+    if (!el) return;
+    el.addEventListener("input", recalcFacade);
+    el.addEventListener("change", recalcFacade);
+  });
+
+  recalcFacade();
+})();
+</script>
+{% endif %}
 {% endblock %}

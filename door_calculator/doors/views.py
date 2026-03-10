@@ -573,7 +573,14 @@ def calculate_order(request, order_id):
         if calc_mode == "facade":
             # Prefer KS from methodology
             ks_qty = facade_total_ks
+            facade_json = request.POST.get("facade_data_json")
 
+            if facade_json:
+                try:
+                    item.facade_data = json.loads(facade_json)
+                except Exception:
+                    item.facade_data = None
+                item.save(update_fields=["facade_data"])
             # Fallback: if only money provided (legacy), convert -> ks
             if (ks_qty is None or ks_qty <= 0) and facade_total_cost is not None:
                 if price_per_ks <= 0:
@@ -2179,6 +2186,15 @@ def order_item_edit(request, item_id):
         except Exception:
             return Decimal("1")
 
+    def _to_decimal_or_none(val):
+        val = (val or "").strip().replace(",", ".")
+        if val == "":
+            return None
+        try:
+            return Decimal(val)
+        except Exception:
+            return None
+
     def _is_missing(val):
         return val is None or str(val).strip() == ""
 
@@ -2191,6 +2207,33 @@ def order_item_edit(request, item_id):
             pass
         else:
             item.quantity = _to_decimal_or_one(qty_raw)
+
+            # =========================
+            # ФАСАД: редагування параметрів фасаду
+            # =========================
+            is_facade_item = item.product_items.filter(product__name="Фасад (розрахунок)").exists()
+
+            if is_facade_item:
+                facade_total_ks = _to_decimal_or_none(request.POST.get("facade_total_ks"))
+                facade_json = request.POST.get("facade_data_json")
+
+                if facade_json:
+                    try:
+                        item.facade_data = json.loads(facade_json)
+                    except Exception:
+                        item.facade_data = None
+
+                if facade_total_ks is not None and facade_total_ks > 0:
+                    carrier = item.product_items.filter(product__name="Фасад (розрахунок)").first()
+                    if carrier:
+                        carrier.quantity = facade_total_ks
+                        carrier.save(update_fields=["quantity"])
+
+                item.save()
+                _recalc_order_totals(order)
+
+                messages.success(request, "Фасадну позицію успішно оновлено ✅")
+                return redirect("calculate_order", order_id=order.id)
         # =========================
         # ВИРОБИ з кількістю (OrderItemProduct)
         # =========================
@@ -2296,7 +2339,13 @@ def order_item_edit(request, item_id):
 
     selected_coeffs_ids = set(item.coefficients.values_list("id", flat=True))
     addition_qty = {ai.addition_id: ai.quantity for ai in item.addition_items.all()}
+    is_facade_item = item.product_items.filter(product__name="Фасад (розрахунок)").exists()
+    facade = item.facade_data or {}
+    facade_total_ks = None
 
+    carrier = item.product_items.filter(product__name="Фасад (розрахунок)").first()
+    if carrier:
+        facade_total_ks = carrier.quantity
     return render(
         request,
         "doors/order_item_edit.html",
@@ -2310,6 +2359,10 @@ def order_item_edit(request, item_id):
             "product_qty": product_qty,
             "selected_coeffs_ids": selected_coeffs_ids,
             "addition_qty": addition_qty,
+            "is_facade_item": is_facade_item,
+            "facade": facade,
+            "facade_total_ks": facade_total_ks,
+            "facade_data_json": json.dumps(facade, ensure_ascii=False) if facade else "",
         },
     )
 

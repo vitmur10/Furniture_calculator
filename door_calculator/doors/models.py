@@ -323,6 +323,7 @@ class OrderItem(models.Model):
         blank=True,
         help_text="Назва позиції (напр. 'Двостулкові двері')",
     )
+    facade_data = models.JSONField(null=True, blank=True)
     products = models.ManyToManyField(Product, blank=True)
     products_v2 = models.ManyToManyField(
         "Product",
