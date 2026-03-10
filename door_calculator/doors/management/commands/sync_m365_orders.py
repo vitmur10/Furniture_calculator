@@ -15,28 +15,6 @@ from doors.services.m365_graph import (
     list_children,
     search_in_folder,
 )
-import time
-import signal
-
-
-IGNORED_CALC_FILE_MARKERS = [
-    "попередній_",
-    "фінальний_",
-    "комерційна_пропозиція",
-    "внутрішній_розрахунок",
-    "_розрахунок_",
-    "_кп_",
-]
-
-
-def is_own_generated_calc_file(filename: str) -> bool:
-    name = (filename or "").lower()
-    return any(marker in name for marker in IGNORED_CALC_FILE_MARKERS)
-
-
-# ----------------------------
-# Helpers
-# ----------------------------
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
 
@@ -64,83 +42,35 @@ def make_order_number(folder_id: str) -> str:
     return h
 
 
-# ✅ NEW: helpers for detecting remote changes (won't break if fields don't exist)
-def _get_remote_etag(it: dict) -> str:
-    # Graph може віддавати eTag або @microsoft.graph.etag
-    val = it.get("eTag") or it.get("@microsoft.graph.etag") or ""
-    return (str(val)[:255]) if val else ""
-
-
-def _get_remote_last_modified(it: dict) -> str:
-    # Часто lastModifiedDateTime є на верхньому рівні або в fileSystemInfo
-    fs = it.get("fileSystemInfo") or {}
-    return it.get("lastModifiedDateTime") or fs.get("lastModifiedDateTime") or ""
-
-
-# -------- folder pickers (single / all) --------
-
-def pick_child_folder_contains(drive_id: str, parent_id: str, needle: str):
-    """FIRST direct child folder whose name contains needle."""
-    needle_n = _norm(needle)
-    for it in list_children(drive_id, parent_id) or []:
-        if _is_folder(it) and needle_n in _norm(it.get("name", "")):
-            return it
-    return None
-
-
-def pick_child_folders_contains(drive_id: str, parent_id: str, needle: str) -> List[dict]:
-    """ALL direct child folders whose name contains needle."""
-    needle_n = _norm(needle)
-    out = []
-    for it in list_children(drive_id, parent_id) or []:
-        if _is_folder(it) and needle_n in _norm(it.get("name", "")):
-            out.append(it)
-    return out
+def _safe_search_in_folder(drive_id: str, parent_id: str, needle: str) -> List[dict]:
+    try:
+        return search_in_folder(drive_id, parent_id, needle) or []
+    except Exception:
+        try:
+            return list_children(drive_id, parent_id) or []
+        except Exception:
+            return []
 
 
 def pick_search_folder_contains(drive_id: str, parent_id: str, needle: str):
-    """FIRST folder from Graph search results in folder parent_id whose name contains needle."""
     needle_n = _norm(needle)
-    for it in search_in_folder(drive_id, parent_id, needle) or []:
+    for it in _safe_search_in_folder(drive_id, parent_id, needle):
         if _is_folder(it) and needle_n in _norm(it.get("name", "")):
             return it
     return None
 
 
 def pick_search_folders_contains(drive_id: str, parent_id: str, needle: str) -> List[dict]:
-    """ALL folders from Graph search results in folder parent_id whose name contains needle."""
     needle_n = _norm(needle)
     out = []
-    for it in search_in_folder(drive_id, parent_id, needle) or []:
+    for it in _safe_search_in_folder(drive_id, parent_id, needle):
         if _is_folder(it) and needle_n in _norm(it.get("name", "")):
             out.append(it)
     return out
 
 
-# -------- chain resolver (supports branching) --------
-
 def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: List[Dict]) -> List[dict]:
-    """
-    Returns LIST of leaf folder items.
-    Supports branching steps that return multiple folders.
-
-    Step types:
-      - child_contains:       pick FIRST direct child containing value (per current folder)
-      - child_all_contains:   pick ALL direct children containing value (per current folder)
-      - search_contains:      pick FIRST search match containing value (per current folder)
-      - search_all_contains:  pick ALL search matches containing value (per current folder)
-
-    Algorithm:
-      current_ids = [start_folder_id]
-      for step in chain:
-          next_folders = []
-          for cid in current_ids:
-              ... append found folder(s) ...
-          current_ids = ids(next_folders)
-      return last found folders (with id+name+webUrl if available)
-    """
     current_ids = [start_folder_id]
-    current_items = [{"id": start_folder_id}]  # best-effort items
 
     for step in chain:
         step_type = step["type"]
@@ -149,15 +79,8 @@ def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: Li
         next_items: List[dict] = []
 
         for cid in current_ids:
-            if step_type == "child_contains":
-                found = pick_child_folder_contains(drive_id, cid, value)
-                if found:
-                    next_items.append(found)
 
-            elif step_type == "child_all_contains":
-                next_items.extend(pick_child_folders_contains(drive_id, cid, value))
-
-            elif step_type == "search_contains":
+            if step_type == "search_contains":
                 found = pick_search_folder_contains(drive_id, cid, value)
                 if found:
                     next_items.append(found)
@@ -165,29 +88,13 @@ def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: Li
             elif step_type == "search_all_contains":
                 next_items.extend(pick_search_folders_contains(drive_id, cid, value))
 
-            else:
-                raise ValueError(f"Unknown step type: {step_type}")
-
         if not next_items:
             return []
 
-        # de-dup by id (Graph search can return duplicates)
-        seen = set()
-        deduped = []
-        for it in next_items:
-            fid = it.get("id")
-            if not fid or fid in seen:
-                continue
-            seen.add(fid)
-            deduped.append(it)
+        current_ids = [it["id"] for it in next_items]
 
-        current_items = deduped
-        current_ids = [it["id"] for it in deduped]
+    return next_items
 
-    return current_items
-
-
-# -------- file iterators --------
 
 def iter_files_direct(drive_id: str, folder_id: str) -> Iterable[dict]:
     for it in list_children(drive_id, folder_id) or []:
@@ -195,443 +102,148 @@ def iter_files_direct(drive_id: str, folder_id: str) -> Iterable[dict]:
             yield it
 
 
-def iter_files_recursive(drive_id: str, folder_id: str) -> Iterable[dict]:
-    stack = [folder_id]
-    while stack:
-        cur = stack.pop()
-        for it in list_children(drive_id, cur) or []:
-            if it.get("folder"):
-                stack.append(it["id"])
-                continue
-            if "file" in it:
-                yield it
-
-
-def detect_work_type(site: dict, site_name_fallback: str = "") -> str:
-    """
-    Визначає, це "project" чи "rework" по назві сайту.
-    Правило: якщо містить "Переробка" (case-sensitive як у тебе) -> rework.
-    """
-    site_display = (site.get("displayName", "") or site.get("name", "") or site_name_fallback or "").strip()
-
-    # можна зробити більш стійко до регістру:
-    # if "переробка" in site_display.lower():
-    if "Переробка" in site_display:
-        return "rework"
-    return "project"
-
-
-# ----------------------------
-# Command
-# ----------------------------
-
 class Command(BaseCommand):
-    help = (
-        "Sync Orders from M365 (SharePoint) using folder chains.\n"
-        "Projects are auto-detected as root folders.\n"
-        "IMPORTANT: supports multiple 'КП*' and multiple 'Для КС*' folders (imports from ALL found leaf folders)."
-    )
-
-    def add_arguments(self, parser):
-        parser.add_argument(
-            "--limit",
-            type=int,
-            default=0,
-            help="Limit number of root folders (projects) to process per site (0 = no limit).",
-        )
-        parser.add_argument(
-            "--watch",
-            action="store_true",
-            help="Run sync in a loop until stopped (Ctrl+C / SIGTERM).",
-        )
-        parser.add_argument(
-            "--interval",
-            type=int,
-            default=10,
-            help="Seconds between sync iterations in --watch mode (default: 300).",
-        )
+    help = "Sync Orders from Microsoft 365 (Teams/SharePoint)"
 
     def handle(self, *args, **options):
-        limit = int(options.get("limit") or 0)
-        watch = bool(options.get("watch"))
-        interval = int(options.get("interval") or 300)
 
-        # ---- graceful stop (Ctrl+C / SIGTERM) ----
-        stop = {"flag": False}
-
-        def _stop_handler(signum, frame):
-            stop["flag"] = True
-
-        signal.signal(signal.SIGTERM, _stop_handler)
-        signal.signal(signal.SIGINT, _stop_handler)
-
-        # ---- config validation (залишаємо як у тебе) ----
         site_names = getattr(settings, "M365_SITE_DISPLAY_NAMES", None)
         if not site_names:
             site_names = [getattr(settings, "M365_SITE_DISPLAY_NAME", None)]
-        site_names = [s for s in (site_names or []) if s]
-        if not site_names:
-            raise CommandError("No M365 site names configured (M365_SITE_DISPLAY_NAME(S))")
 
         drive_name = getattr(settings, "M365_DRIVE_NAME", None)
-        if not drive_name:
-            raise CommandError("M365_DRIVE_NAME is not set in settings.py")
-
         chains = getattr(settings, "M365_SYNC_CHAINS", None)
-        if not chains or not isinstance(chains, dict):
-            raise CommandError("M365_SYNC_CHAINS is empty or invalid in settings.py")
 
-        level3_mode = getattr(settings, "M365_LEVEL3_MODE", "direct")
-        if level3_mode not in ("direct", "recursive"):
-            level3_mode = "direct"
+        if not site_names:
+            raise CommandError("M365 site not configured")
 
-        # ---- one iteration of sync ----
-        def run_once():
-            created_orders = 0
-            updated_orders = 0
-            created_files = 0
-            created_images = 0
-            deleted_files = 0
-            deleted_images = 0
-            deleted_orders = 0
-            skipped_root_folders_without_structure = 0
+        if not drive_name:
+            raise CommandError("M365_DRIVE_NAME missing")
 
-            for site_name in site_names:
-                self.stdout.write(self.style.NOTICE(f"\n=== SITE: {site_name} ==="))
+        if not chains:
+            raise CommandError("M365_SYNC_CHAINS missing")
 
-                site = find_site_by_display_name(site_name)
-                if not site:
-                    self.stdout.write(self.style.WARNING(f"Site not found: {site_name}"))
+        created_orders = 0
+        deleted_orders = 0
+        created_files = 0
+        created_images = 0
+
+        for site_name in site_names:
+
+            site = find_site_by_display_name(site_name)
+            if not site:
+                continue
+
+            drive = pick_drive(site["id"], drive_name)
+            if not drive:
+                continue
+
+            drive_id = drive["id"]
+
+            root_items = list_root_children(drive_id) or []
+            project_folders = [it for it in root_items if _is_folder(it)]
+
+            current_root_ids = {it["id"] for it in project_folders}
+
+            for folder in project_folders:
+
+                folder_id = folder["id"]
+                folder_name = folder.get("name", "")
+                folder_url = folder.get("webUrl", "")
+
+                chain_leafs = {}
+
+                for chain_name, chain in chains.items():
+                    leafs = resolve_leaf_folders_by_chain(drive_id, folder_id, chain)
+                    if leafs:
+                        chain_leafs[chain_name] = leafs
+
+                if not chain_leafs:
                     continue
 
-                # ✅ тут визначаємо тип роботи
-                work_type = detect_work_type(site, site_name_fallback=site_name)
+                with transaction.atomic():
 
-                drive = pick_drive(site["id"], drive_name)
-                if not drive:
-                    self.stdout.write(self.style.WARNING(
-                        f"Drive '{drive_name}' not found in site '{site_name}'"
-                    ))
-                    continue
+                    order = Order.objects.filter(
+                        source="m365",
+                        remote_folder_id=folder_id,
+                    ).first()
 
-                drive_id = drive["id"]
+                    if not order:
 
-                root_items = list_root_children(drive_id) or []
-                project_candidates = [it for it in root_items if _is_folder(it)]
-                if limit > 0:
-                    project_candidates = project_candidates[:limit]
+                        order = Order.objects.create(
+                            order_name=folder_name,
+                            order_number=make_order_number(folder_id),
+                            source="m365",
+                            remote_site_id=site["id"],
+                            remote_drive_id=drive_id,
+                            remote_folder_id=folder_id,
+                            remote_web_url=folder_url,
+                        )
 
-                current_root_folder_ids = {it["id"] for it in project_candidates}
+                        created_orders += 1
 
-                self.stdout.write(self.style.NOTICE(f"Root folder candidates: {len(project_candidates)}"))
-                self.stdout.write(self.style.NOTICE(f"Detected work_type: {work_type}"))
+                    for leafs in chain_leafs.values():
 
-                for folder in project_candidates:
-                    folder_id = folder["id"]
-                    folder_name = folder.get("name", "") or ""
-                    folder_url = folder.get("webUrl", "") or ""
+                        for leaf in leafs:
 
-                    # Resolve leaf folders for each chain (can be MANY leaf folders now)
-                    chain_to_leafs: Dict[str, List[dict]] = {}
-                    for chain_name, chain in chains.items():
-                        leafs = resolve_leaf_folders_by_chain(drive_id, folder_id, chain)
-                        if leafs:
-                            chain_to_leafs[chain_name] = leafs
+                            for it in iter_files_direct(drive_id, leaf["id"]):
 
-                    if not chain_to_leafs:
-                        skipped_root_folders_without_structure += 1
-                        continue
+                                file_id = it["id"]
+                                name = it.get("name", "")
+                                web = it.get("webUrl", "")
 
-                    # Create/update Order
-                    with transaction.atomic():
-                        order = Order.objects.filter(source="m365", remote_folder_id=folder_id).first()
+                                if _is_image(name):
 
-                        if not order:
-                            try:
-                                order = Order.objects.create(
-                                    order_name=folder_name,
-                                    order_number=make_order_number(folder_id),
-                                    source="m365",
-                                    work_type=work_type,  # ✅ NEW
-                                    remote_site_id=site["id"],
-                                    remote_drive_id=drive_id,
-                                    remote_folder_id=folder_id,
-                                    remote_web_url=folder_url,
-                                )
-                                created_orders += 1
-                            except IntegrityError:
-                                order = Order.objects.create(
-                                    order_name=folder_name,
-                                    order_number=f"M365-{uuid.uuid4().hex[:10].upper()}",
-                                    source="m365",
-                                    work_type=work_type,  # ✅ NEW
-                                    remote_site_id=site["id"],
-                                    remote_drive_id=drive_id,
-                                    remote_folder_id=folder_id,
-                                    remote_web_url=folder_url,
-                                )
-                                created_orders += 1
-                        else:
-                            changed = False
-                            update_fields = []
-
-                            if order.order_name != folder_name:
-                                order.order_name = folder_name
-                                changed = True
-                                update_fields.append("order_name")
-
-                            if order.remote_web_url != folder_url:
-                                order.remote_web_url = folder_url
-                                changed = True
-                                update_fields.append("remote_web_url")
-
-                            # ✅ NEW: оновлюємо тип
-                            if getattr(order, "work_type", None) != work_type:
-                                order.work_type = work_type
-                                changed = True
-                                update_fields.append("work_type")
-
-                            if changed:
-                                order.save(update_fields=update_fields)
-                                updated_orders += 1
-
-                        # ✅ NEW: збираємо що реально є в M365 для цього order
-                        seen_file_ids = set()
-                        seen_image_ids = set()
-
-                        # Import from ALL leaf folders
-                        for chain_name, leafs in chain_to_leafs.items():
-                            self.stdout.write(self.style.NOTICE(
-                                f"[{order.order_number}] {chain_name}: found {len(leafs)} leaf folder(s)"
-                            ))
-
-                            for leaf in leafs:
-                                leaf_id = leaf["id"]
-                                leaf_name = leaf.get("name") or leaf_id
-
-                                # Choose file iteration mode
-                                items_iter = (
-                                    iter_files_recursive(drive_id, leaf_id)
-                                    if level3_mode == "recursive"
-                                    else iter_files_direct(drive_id, leaf_id)
-                                )
-
-                                # Optional: show where we read from
-                                self.stdout.write(self.style.NOTICE(
-                                    f"[{order.order_number}] {chain_name} -> {leaf_name}"
-                                ))
-
-                                for it in items_iter:
-                                    remote_item_id = it["id"]
-                                    file_name = it.get("name", "") or ""
-                                    web_url = it.get("webUrl", "") or ""
-                                    size = it.get("size") or 0
-
-                                    # ❌ пропускаємо файли, які ми самі заливаємо
-                                    if is_own_generated_calc_file(file_name):
-                                        continue
-
-                                    if _is_image(file_name):
-                                        seen_image_ids.add(remote_item_id)
-
-                                        existing = OrderImage.objects.filter(
-                                            remote_drive_id=drive_id,
-                                            remote_item_id=remote_item_id,
-                                        ).first()
-
-                                        if existing:
-                                            update_fields = []
-                                            changed = False
-
-                                            if existing.order_id != order.id:
-                                                existing.order = order
-                                                changed = True
-                                                update_fields.append("order")
-
-                                            if getattr(existing, "remote_name", None) != file_name:
-                                                existing.remote_name = file_name
-                                                changed = True
-                                                update_fields.append("remote_name")
-
-                                            if getattr(existing, "remote_size", None) != size:
-                                                existing.remote_size = size
-                                                changed = True
-                                                update_fields.append("remote_size")
-
-                                            if getattr(existing, "remote_web_url", None) != web_url:
-                                                existing.remote_web_url = web_url
-                                                changed = True
-                                                update_fields.append("remote_web_url")
-
-                                            # опційно, якщо поля існують у моделі
-                                            etag = _get_remote_etag(it)
-                                            if hasattr(existing, "remote_etag") and existing.remote_etag != etag:
-                                                existing.remote_etag = etag
-                                                changed = True
-                                                update_fields.append("remote_etag")
-
-                                            lm = _get_remote_last_modified(it)
-                                            if hasattr(existing, "remote_last_modified") and existing.remote_last_modified != lm:
-                                                existing.remote_last_modified = lm
-                                                changed = True
-                                                update_fields.append("remote_last_modified")
-
-                                            if changed:
-                                                existing.save(update_fields=update_fields)
-
-                                            continue
+                                    if not OrderImage.objects.filter(
+                                            remote_item_id=file_id
+                                    ).exists():
 
                                         OrderImage.objects.create(
                                             order=order,
                                             remote_site_id=site["id"],
                                             remote_drive_id=drive_id,
-                                            remote_item_id=remote_item_id,
-                                            remote_web_url=web_url,
-                                            remote_name=file_name,
-                                            remote_size=size,
-                                            # якщо у моделі є поля — можна додати,
-                                            # але ми НЕ додаємо тут, щоб нічого не поламати.
-                                            # remote_etag=_get_remote_etag(it),
-                                            # remote_last_modified=_get_remote_last_modified(it),
+                                            remote_item_id=file_id,
+                                            remote_web_url=web,
+                                            remote_name=name,
                                         )
+
                                         created_images += 1
 
-                                    else:
-                                        seen_file_ids.add(remote_item_id)
+                                else:
 
-                                        existing_f = OrderFile.objects.filter(
-                                            remote_drive_id=drive_id,
-                                            remote_item_id=remote_item_id,
-                                        ).first()
-
-                                        if existing_f:
-                                            update_fields = []
-                                            changed = False
-
-                                            if existing_f.order_id != order.id:
-                                                existing_f.order = order
-                                                changed = True
-                                                update_fields.append("order")
-
-                                            if getattr(existing_f, "remote_name", None) != file_name:
-                                                existing_f.remote_name = file_name
-                                                changed = True
-                                                update_fields.append("remote_name")
-
-                                            if getattr(existing_f, "remote_size", None) != size:
-                                                existing_f.remote_size = size
-                                                changed = True
-                                                update_fields.append("remote_size")
-
-                                            if getattr(existing_f, "remote_web_url", None) != web_url:
-                                                existing_f.remote_web_url = web_url
-                                                changed = True
-                                                update_fields.append("remote_web_url")
-
-                                            # description у тебе = file_name при створенні — тримаємо актуальним
-                                            if getattr(existing_f, "description", None) and existing_f.description != file_name:
-                                                existing_f.description = file_name
-                                                changed = True
-                                                update_fields.append("description")
-
-                                            # опційно, якщо поля існують у моделі
-                                            etag = _get_remote_etag(it)
-                                            if hasattr(existing_f, "remote_etag") and existing_f.remote_etag != etag:
-                                                existing_f.remote_etag = etag
-                                                changed = True
-                                                update_fields.append("remote_etag")
-
-                                            lm = _get_remote_last_modified(it)
-                                            if hasattr(existing_f, "remote_last_modified") and existing_f.remote_last_modified != lm:
-                                                existing_f.remote_last_modified = lm
-                                                changed = True
-                                                update_fields.append("remote_last_modified")
-
-                                            if changed:
-                                                existing_f.save(update_fields=update_fields)
-
-                                            continue
+                                    if not OrderFile.objects.filter(
+                                            remote_item_id=file_id
+                                    ).exists():
 
                                         OrderFile.objects.create(
                                             order=order,
                                             source="m365",
                                             remote_site_id=site["id"],
                                             remote_drive_id=drive_id,
-                                            remote_item_id=remote_item_id,
-                                            remote_web_url=web_url,
-                                            remote_name=file_name,
-                                            remote_size=size,
-                                            description=file_name,
+                                            remote_item_id=file_id,
+                                            remote_web_url=web,
+                                            remote_name=name,
                                         )
+
                                         created_files += 1
 
-                        # ✅ NEW: видаляємо локальні записи, яких вже немає в M365
-                        # файли
-                        qf = OrderFile.objects.filter(order=order, source="m365", remote_drive_id=drive_id)
-                        if seen_file_ids:
-                            df, _ = qf.exclude(remote_item_id__in=seen_file_ids).delete()
-                        else:
-                            # якщо не знайшли жодного файла в M365-структурі — видалимо всі локальні
-                            df, _ = qf.delete()
-                        deleted_files += df
+            # delete removed projects
+            stale_orders = Order.objects.filter(
+                source="m365",
+                remote_site_id=site["id"],
+                remote_drive_id=drive_id,
+            ).exclude(
+                remote_folder_id__in=current_root_ids
+            )
 
-                        # картинки
-                        qi = OrderImage.objects.filter(order=order, remote_drive_id=drive_id)
-                        if seen_image_ids:
-                            di, _ = qi.exclude(remote_item_id__in=seen_image_ids).delete()
-                        else:
-                            di, _ = qi.delete()
-                        deleted_images += di
+            for order in stale_orders:
+                order.delete()
+                deleted_orders += 1
 
-                # ✅ NEW: видаляємо локальні orders, яких вже немає в M365
-                # Робимо це тільки якщо sync без limit і root_items не пустий,
-                # щоб випадково не видалити все при частковому або збійному проході.
-                if limit == 0 and root_items:
-                    stale_orders_qs = Order.objects.filter(
-                        source="m365",
-                        remote_site_id=site["id"],
-                        remote_drive_id=drive_id,
-                    ).exclude(remote_folder_id__in=current_root_folder_ids)
-
-                    stale_orders = list(stale_orders_qs)
-                    for stale_order in stale_orders:
-                        self.stdout.write(self.style.WARNING(
-                            f"Deleting stale order: {stale_order.order_number} / {stale_order.order_name}"
-                        ))
-                        stale_order.delete()
-                        deleted_orders += 1
-                elif limit == 0 and not root_items:
-                    self.stdout.write(self.style.WARNING(
-                        f"Skip stale order deletion for site '{site_name}' because root_items is empty"
-                    ))
-
-            self.stdout.write(self.style.SUCCESS(
-                "Done. "
-                f"created_orders={created_orders}, updated_orders={updated_orders}, "
-                f"created_images={created_images}, created_files={created_files}, "
-                f"deleted_images={deleted_images}, deleted_files={deleted_files}, "
-                f"deleted_orders={deleted_orders}, "
-                f"skipped_root_folders_without_structure={skipped_root_folders_without_structure}"
-            ))
-
-        # ---- run once or loop ----
-        if not watch:
-            run_once()
-            return
-
-        self.stdout.write(self.style.NOTICE(f"Watch mode enabled. interval={interval}s"))
-
-        while not stop["flag"]:
-            try:
-                run_once()
-            except Exception as e:
-                # щоб процес не падав назавжди через 1 помилку
-                self.stdout.write(self.style.ERROR(f"Sync iteration failed: {e}"))
-
-            # sleep with quick stop
-            for _ in range(interval):
-                if stop["flag"]:
-                    break
-                time.sleep(1)
-
-        self.stdout.write(self.style.WARNING("Stopped (watch mode)."))
+        self.stdout.write(self.style.SUCCESS(
+            f"Sync finished. "
+            f"created_orders={created_orders}, "
+            f"created_files={created_files}, "
+            f"created_images={created_images}, "
+            f"deleted_orders={deleted_orders}"
+        ))
