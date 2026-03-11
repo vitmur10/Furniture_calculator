@@ -1234,6 +1234,19 @@ def generate_pdf(request, order_id):
     else:
         base_font = "Helvetica"
 
+    # ---------- стилі ----------
+    styles = getSampleStyleSheet()
+
+    cell_style = ParagraphStyle(
+        name="CellStyle",
+        parent=styles["Normal"],
+        fontName=base_font,
+        fontSize=9,
+        leading=11,
+        alignment=TA_LEFT,
+        wordWrap="CJK",
+    )
+
     # ---------- шапка ----------
     if company and getattr(company, "logo", None):
         try:
@@ -1318,7 +1331,6 @@ def generate_pdf(request, order_id):
         ]]
 
         # ✅ Стиль для переносу формули
-        styles = getSampleStyleSheet()
         formula_style = ParagraphStyle(
             name="FormulaStyle",
             parent=styles["Normal"],
@@ -1368,7 +1380,7 @@ def generate_pdf(request, order_id):
             mark_up = final_price - base_price
             data.append([
                 str(idx),
-                name[:45],
+                Paragraph(name, cell_style),
                 fmt_qty(qty_item),
                 Paragraph(formula, formula_style),
                 f"{ks_eff:.2f}",
@@ -1390,9 +1402,12 @@ def generate_pdf(request, order_id):
             ("ALIGN", (0, 0), (-1, 0), "CENTER"),
             ("ALIGN", (0, 1), (0, -1), "CENTER"),
             ("ALIGN", (2, 1), (4, -1), "CENTER"),
-            ("ALIGN", (5, 1), (5, -1), "RIGHT"),
+            ("ALIGN", (5, 1), (8, -1), "RIGHT"),
+            ("ALIGN", (1, 1), (1, -1), "LEFT"),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEADING", (0, 0), (-1, -1), 10),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
 
         _, h = tbl.wrap(0, 0)
@@ -1487,21 +1502,29 @@ def generate_pdf(request, order_id):
             )
 
             main_data.append([
-                idx,
-                safe_text(getattr(it, "name", "")),
+                str(idx),
+                Paragraph(safe_text(getattr(it, "name", "")), cell_style),
                 fmt_qty(qty),
                 f"{unit_cost:.2f}",
                 f"{total_with_markup:.2f}"
             ])
 
-        main_table = Table(main_data, colWidths=[30, 230, 70, 130, 80])
+        main_table = Table(main_data, colWidths=[30, 250, 60, 110, 90])
         main_table.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
             ("FONTNAME", (0, 0), (-1, -1), base_font),
             ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("BACKGROUND", (0, 0), (-1, 0), colors.white),
             ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+            ("ALIGN", (0, 1), (0, -1), "CENTER"),
+            ("ALIGN", (2, 1), (-1, -1), "CENTER"),
+            ("ALIGN", (1, 1), (1, -1), "LEFT"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (1, 1), (1, -1), 6),
+            ("RIGHTPADDING", (1, 1), (1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
 
         _, main_h = main_table.wrap(0, 0)
@@ -1582,7 +1605,6 @@ def generate_pdf(request, order_id):
     response = HttpResponse(buffer, content_type="application/pdf")
     response["Content-Disposition"] = f'inline; filename="{filename}"'
     return response
-
 
 def worklog_list(request):
     # Отримуємо всі записи
