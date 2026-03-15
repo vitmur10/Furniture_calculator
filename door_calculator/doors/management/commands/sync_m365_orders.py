@@ -1,11 +1,11 @@
-import hashlib
 import os
-import uuid
 from typing import Iterable, List, Dict
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.db import IntegrityError, transaction
+from django.db import transaction
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from doors.models import Order, OrderFile, OrderImage
 from doors.services.m365_graph import (
@@ -37,9 +37,45 @@ def _is_image(name: str) -> bool:
     return ext in IMAGE_EXTS
 
 
-def make_order_number(folder_id: str) -> str:
-    h = hashlib.sha1(folder_id.encode("utf-8")).hexdigest()[:10].upper()
-    return h
+def _parse_m365_created_dt(item: dict):
+    raw = (item or {}).get("createdDateTime")
+    if not raw:
+        return timezone.now()
+
+    dt = parse_datetime(raw)
+    if dt is None:
+        return timezone.now()
+
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_current_timezone())
+
+    return timezone.localtime(dt)
+
+
+def get_type_letter(site_name: str) -> str:
+    return "П" if "перероб" in (site_name or "").lower() else "О"
+
+
+def make_order_number_base(folder: dict, site_name: str) -> str:
+    created_dt = _parse_m365_created_dt(folder)
+    date_part = created_dt.strftime("%d.%m.%y")
+    type_letter = get_type_letter(site_name)
+    return f"{date_part}{type_letter}"
+
+
+def make_unique_order_number(folder: dict, site_name: str) -> str:
+    base = make_order_number_base(folder, site_name)
+
+    existing_numbers = set(
+        Order.objects.filter(order_number__startswith=base)
+        .values_list("order_number", flat=True)
+    )
+
+    index = 1
+    while f"{base}{index}" in existing_numbers:
+        index += 1
+
+    return f"{base}{index}"
 
 
 def _safe_search_in_folder(drive_id: str, parent_id: str, needle: str) -> List[dict]:
@@ -50,6 +86,23 @@ def _safe_search_in_folder(drive_id: str, parent_id: str, needle: str) -> List[d
             return list_children(drive_id, parent_id) or []
         except Exception:
             return []
+
+
+def pick_child_folder_contains(drive_id: str, parent_id: str, needle: str):
+    needle_n = _norm(needle)
+    for it in list_children(drive_id, parent_id) or []:
+        if _is_folder(it) and needle_n in _norm(it.get("name", "")):
+            return it
+    return None
+
+
+def pick_child_folders_contains(drive_id: str, parent_id: str, needle: str) -> List[dict]:
+    needle_n = _norm(needle)
+    out = []
+    for it in list_children(drive_id, parent_id) or []:
+        if _is_folder(it) and needle_n in _norm(it.get("name", "")):
+            out.append(it)
+    return out
 
 
 def pick_search_folder_contains(drive_id: str, parent_id: str, needle: str):
@@ -80,7 +133,15 @@ def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: Li
 
         for cid in current_ids:
 
-            if step_type == "search_contains":
+            if step_type == "child_contains":
+                found = pick_child_folder_contains(drive_id, cid, value)
+                if found:
+                    next_items.append(found)
+
+            elif step_type == "child_all_contains":
+                next_items.extend(pick_child_folders_contains(drive_id, cid, value))
+
+            elif step_type == "search_contains":
                 found = pick_search_folder_contains(drive_id, cid, value)
                 if found:
                     next_items.append(found)
@@ -169,10 +230,9 @@ class Command(BaseCommand):
                     ).first()
 
                     if not order:
-
                         order = Order.objects.create(
                             order_name=folder_name,
-                            order_number=make_order_number(folder_id),
+                            order_number=make_unique_order_number(folder, site_name),
                             source="m365",
                             remote_site_id=site["id"],
                             remote_drive_id=drive_id,
@@ -195,7 +255,7 @@ class Command(BaseCommand):
                                 if _is_image(name):
 
                                     if not OrderImage.objects.filter(
-                                            remote_item_id=file_id
+                                        remote_item_id=file_id
                                     ).exists():
 
                                         OrderImage.objects.create(
@@ -212,7 +272,7 @@ class Command(BaseCommand):
                                 else:
 
                                     if not OrderFile.objects.filter(
-                                            remote_item_id=file_id
+                                        remote_item_id=file_id
                                     ).exists():
 
                                         OrderFile.objects.create(
@@ -227,7 +287,6 @@ class Command(BaseCommand):
 
                                         created_files += 1
 
-            # delete removed projects
             stale_orders = Order.objects.filter(
                 source="m365",
                 remote_site_id=site["id"],
