@@ -41,6 +41,8 @@ from math import ceil
 from decimal import Decimal, ROUND_HALF_UP
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
+import re
+
 logger = logging.getLogger(__name__)
 
 
@@ -153,6 +155,44 @@ def order_list(request):
         "work_type_choices": Order.WORK_TYPE_CHOICES,
     }
     return render(request, "doors/order_list.html", context)
+
+
+def extract_kp_suffix_from_folder(folder: dict | None) -> str:
+    name = ((folder or {}).get("name") or "").strip()
+
+    # КП1 / КП 1 / КП-1
+    m = re.search(r"кп[\s\-]*([0-9]+)", name, flags=re.IGNORECASE)
+    if m:
+        return f"КП{m.group(1)}"
+
+    return "КП1"
+
+
+def extract_d_suffix_from_folder(folder: dict | None) -> str:
+    name = ((folder or {}).get("name") or "").strip()
+
+    # Д1 / Д 1 / Д-1
+    m = re.search(r"\bд[\s\-]*([0-9]+)\b", name, flags=re.IGNORECASE)
+    if m:
+        return f"Д{m.group(1)}"
+
+    return "Д1"
+
+
+def build_pdf_number(order: Order, mode: str, target_folder: dict | None = None) -> str:
+    base = (order.order_number or "").strip()
+    if not base:
+        return ""
+
+    if mode == "precalc":
+        return f"{base}{extract_kp_suffix_from_folder(target_folder)}"
+
+    if mode == "final":
+        if order.status == "in_progress":
+            return f"{base}{extract_d_suffix_from_folder(target_folder)}"
+        return base
+
+    return base
 
 
 @csrf_exempt
@@ -844,6 +884,8 @@ def calculate_order(request, order_id):
         return JsonResponse({"ok": True, "items_html": html})
 
     return render(request, "doors/calculate_order.html", context)
+
+
 def _draw_common_header(p, width, height, company, base_font):
     """
     Спільна шапка: логотип + реквізити.
@@ -1282,7 +1324,8 @@ def generate_pdf(request, order_id):
     p.drawString(40, title_y, title)
 
     p.setFont(base_font, 11)
-    order_number = getattr(order, "order_number", str(order.id))
+    pdf_order_number = (request.GET.get("pdf_number") or "").strip()
+    order_number = pdf_order_number or getattr(order, "order_number", str(order.id))
     created_at = getattr(order, "created_at", None)
     p.drawString(40, title_y - 20, f"Замовлення №: {order_number}")
     p.drawString(40, title_y - 38, f"Дата: {created_at.strftime('%d.%m.%Y') if created_at else ''}")
@@ -1606,6 +1649,7 @@ def generate_pdf(request, order_id):
     response["Content-Disposition"] = f'inline; filename="{filename}"'
     return response
 
+
 def worklog_list(request):
     # Отримуємо всі записи
     logs = WorkLog.objects.select_related("worker", "order").order_by("-date")
@@ -1666,6 +1710,7 @@ def worklog_delete(request, pk):
 
     redirect_url = request.META.get("HTTP_REFERER")
     return redirect(redirect_url if redirect_url else "worklog_list")
+
 
 def report_view(request):
     start_date_raw = request.GET.get("start_date")
@@ -2388,6 +2433,7 @@ def order_item_edit(request, item_id):
         },
     )
 
+
 def order_item_delete(request, item_id):
     item = get_object_or_404(OrderItem, id=item_id)
     order_id = item.order_id
@@ -2826,10 +2872,7 @@ def sync_internal_pdf(request, order_id):
         "packing": 200
       }
 
-    Синхронізує 3 PDF в Teams/SharePoint у відповідні папки:
-      - detailed (default)
-      - offer (?simple=1)
-      - internal (?internal=1)
+    Синхронізує PDF в Teams/SharePoint у відповідні папки.
 
     Логіка папок:
       - work_type="project": шукає leaf-папки "Для КС" (може бути кілька)
@@ -2851,7 +2894,6 @@ def sync_internal_pdf(request, order_id):
     if mode not in ("precalc", "final"):
         return JsonResponse({"ok": False, "error": "Invalid mode. Use 'precalc' or 'final'."}, status=400)
 
-    # Безпечно дістаємо числа (щоб не падало на "10" / "" / None)
     def _num(v, default=0):
         try:
             if v is None or v == "":
@@ -2866,7 +2908,6 @@ def sync_internal_pdf(request, order_id):
 
     # 1) Розв'язуємо цільові папки
     if order.work_type == "rework":
-        # Для переробок: рівно 1 destination папка
         is_final = (mode == "final")
         try:
             dest = resolve_rework_destination_folder(
@@ -2879,9 +2920,7 @@ def sync_internal_pdf(request, order_id):
 
         target_folders = [dest]
     else:
-        # Для звичайних проєктів: може бути багато leaf-папок "Для КС"
         target_folders = resolve_target_folders_for_normal_project(order, mode)
-        # якщо знайшли більше 1 папки — попросити вибір (тільки для project)
         chosen_id = (payload.get("target_folder_id") or "").strip()
 
         if order.work_type != "rework" and len(target_folders) > 1 and not chosen_id:
@@ -2895,14 +2934,12 @@ def sync_internal_pdf(request, order_id):
                 ],
             }, status=409)
 
-        # якщо користувач передав target_folder_id — звузити список до 1
         if order.work_type != "rework" and chosen_id:
             by_id = {x["id"]: x for x in target_folders if x and x.get("id")}
             if chosen_id not in by_id:
                 return JsonResponse({"ok": False, "error": "target_folder_id is not among candidates"}, status=400)
             target_folders = [by_id[chosen_id]]
 
-    # Helper: отримати PDF bytes через generate_pdf з підміною request.GET
     def _render_pdf_bytes(get_params: dict) -> bytes:
         old_get = request.GET
         q = QueryDict(mutable=True)
@@ -2911,16 +2948,13 @@ def sync_internal_pdf(request, order_id):
         request.GET = q
         try:
             resp = generate_pdf(request, order_id)
-
             content = getattr(resp, "content", None)
             if content is None:
-                # fallback: якщо раптом streaming response
                 content = b"".join(resp.streaming_content)
             return content or b""
         finally:
             request.GET = old_get
 
-    # 2) Генеруємо 3 PDF (без download!)
     base_params = {
         "markup": markup,
         "delivery": delivery,
@@ -2929,28 +2963,6 @@ def sync_internal_pdf(request, order_id):
 
     mode_label = "Попередній" if mode == "precalc" else "Фінальний"
 
-    if order.work_type == "rework":
-        pdfs = [
-            ("detailed", {**base_params}, f"{mode_label}_Детальний_{order.order_number}.pdf"),
-            ("offer", {**base_params, "simple": 1}, f"{mode_label}_Комерційна_пропозиція_{order.order_number}.pdf"),
-            (
-                "internal", {**base_params, "internal": 1},
-                f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
-        ]
-    else:
-        pdfs = [
-            (
-                "internal", {**base_params, "internal": 1},
-                f"{mode_label}_Внутрішній_розрахунок_{order.order_number}.pdf"),
-        ]
-    rendered = []
-    for label, params, filename in pdfs:
-        pdf_bytes = _render_pdf_bytes(params)
-        if not pdf_bytes:
-            return JsonResponse({"ok": False, "error": f"Failed to render PDF: {label}"}, status=500)
-        rendered.append((label, filename, pdf_bytes))
-
-    # 3) Заливаємо 3 PDF у кожну цільову папку
     uploaded_folders = 0
     uploaded_files = []
 
@@ -2959,7 +2971,42 @@ def sync_internal_pdf(request, order_id):
         if not folder_id:
             continue
 
-        for label, filename, pdf_bytes in rendered:
+        pdf_number = build_pdf_number(order, mode, folder)
+
+        if order.work_type == "rework":
+            pdfs = [
+                (
+                    "detailed",
+                    {**base_params, "pdf_number": pdf_number},
+                    f"{mode_label}_Детальний_{pdf_number}.pdf"
+                ),
+                (
+                    "offer",
+                    {**base_params, "simple": 1, "pdf_number": pdf_number},
+                    f"{mode_label}_Комерційна_пропозиція_{pdf_number}.pdf"
+                ),
+                (
+                    "internal",
+                    {**base_params, "internal": 1, "pdf_number": pdf_number},
+                    f"{mode_label}_Внутрішній_розрахунок_{pdf_number}.pdf"
+                ),
+            ]
+        else:
+            pdfs = [
+                (
+                    "internal",
+                    {**base_params, "internal": 1, "pdf_number": pdf_number},
+                    f"{mode_label}_Внутрішній_розрахунок_{pdf_number}.pdf"
+                ),
+            ]
+
+        folder_uploaded = []
+
+        for label, params, filename in pdfs:
+            pdf_bytes = _render_pdf_bytes(params)
+            if not pdf_bytes:
+                return JsonResponse({"ok": False, "error": f"Failed to render PDF: {label}"}, status=500)
+
             upload_bytes_to_folder(
                 drive_id=order.remote_drive_id,
                 folder_id=folder_id,
@@ -2968,6 +3015,7 @@ def sync_internal_pdf(request, order_id):
                 content_type="application/pdf",
             )
             uploaded_files.append(filename)
+            folder_uploaded.append(filename)
 
         uploaded_folders += 1
 
@@ -2976,7 +3024,7 @@ def sync_internal_pdf(request, order_id):
         "mode": mode,
         "work_type": order.work_type,
         "uploaded_to": uploaded_folders,
-        "files": [f for _, f, _ in rendered],
+        "files": uploaded_files,
     })
 
 
