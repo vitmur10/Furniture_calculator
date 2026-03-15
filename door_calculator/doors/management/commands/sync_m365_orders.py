@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Iterable, List, Dict
 
 from django.conf import settings
@@ -181,8 +182,20 @@ def iter_files_direct(drive_id: str, folder_id: str) -> Iterable[dict]:
 class Command(BaseCommand):
     help = "Sync Orders from Microsoft 365 (Teams/SharePoint)"
 
-    def handle(self, *args, **options):
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--watch",
+            action="store_true",
+            help="Run sync in a loop",
+        )
+        parser.add_argument(
+            "--interval",
+            type=int,
+            default=30,
+            help="Watch interval in seconds (default: 30)",
+        )
 
+    def _sync_once(self):
         site_names = getattr(settings, "M365_SITE_DISPLAY_NAMES", None)
         if not site_names:
             site_names = [getattr(settings, "M365_SITE_DISPLAY_NAME", None)]
@@ -324,3 +337,25 @@ class Command(BaseCommand):
             f"created_images={created_images}, "
             f"deleted_orders={deleted_orders}"
         ))
+
+    def handle(self, *args, **options):
+        watch = options.get("watch", False)
+        interval = options.get("interval", 5)
+
+        if interval < 1:
+            interval = 1
+
+        if not watch:
+            self._sync_once()
+            return
+
+        self.stdout.write(self.style.WARNING(
+            f"Watch mode started. Interval={interval}s"
+        ))
+
+        while True:
+            try:
+                self._sync_once()
+            except Exception as e:
+                self.stderr.write(self.style.ERROR(f"Sync error: {e}"))
+            time.sleep(interval)
