@@ -1923,8 +1923,12 @@ body.preview-only #sketchHidePart{
                        min="1"
                        value="1"
                        class="form-control form-control-sm addon-qty">
-
-                <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+                <span class="input-group-text addon-ks">
+                  {{ a.ks_value }} к/с
+                  {% if a.extra_ks_value %}
+                    → {{ a.extra_ks_value }} після {{ a.base_qty_limit }} шт
+                  {% endif %}
+                </span>
               </div>
               {% empty %}
                 <div class="text-muted small">Немає доповнень</div>
@@ -3553,10 +3557,103 @@ document.addEventListener("click", function(e){
   })();
 </script>
 <script>
+function resetAddItemForm(form) {
+  const nameInput = form.querySelector('input[name="name"]');
+  if (nameInput) nameInput.value = "";
+
+  const itemQtyInput = form.querySelector('input[name="item_qty"]');
+  if (itemQtyInput) itemQtyInput.value = "1";
+
+  form.querySelectorAll('input[name="products"]').forEach((el) => {
+    el.checked = false;
+  });
+
+  form.querySelectorAll('input[name="additions"]').forEach((el) => {
+    el.checked = false;
+  });
+
+  form.querySelectorAll('input[name="coefficients"]').forEach((el) => {
+    el.checked = false;
+  });
+
+  form.querySelectorAll('input[name^="prod_qty_"]').forEach((el) => {
+    el.value = "1";
+  });
+
+  form.querySelectorAll('input[name^="add_qty_"]').forEach((el) => {
+    el.value = "1";
+  });
+
+  const positionNumberSelect = document.getElementById("positionNumberSelect");
+  if (positionNumberSelect) positionNumberSelect.value = "";
+
+  const calcMode = document.getElementById("calcMode");
+  if (calcMode) calcMode.value = "products";
+
+  const facadeTotalCost = document.getElementById("facadeTotalCost");
+  if (facadeTotalCost) facadeTotalCost.value = "";
+
+  const facadeTotalKs = document.getElementById("facadeTotalKs");
+  if (facadeTotalKs) facadeTotalKs.value = "";
+
+  const facadeDataJson = document.getElementById("facade_data_json");
+  if (facadeDataJson) facadeDataJson.value = "";
+
+  const facadeFieldIds = [
+    "facadeSConstruction",
+    "facadeSFill",
+    "facadeElements",
+    "facadeSCurve",
+    "facadeCrackers",
+    "facadeSupports",
+    "facadeXavg",
+    "facadeCurvePercent",
+    "facadeKCurve",
+    "facadeKFlags",
+    "facadeBaseCost",
+    "facadeExtrasCost",
+    "facadeTotalCostView"
+  ];
+
+  facadeFieldIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    if (["facadeCrackers", "facadeSupports"].includes(id)) {
+      el.value = "0";
+    } else {
+      el.value = "";
+    }
+  });
+
+  const facadeReinforcement = document.getElementById("facadeReinforcement");
+  if (facadeReinforcement) facadeReinforcement.value = "none";
+
+  const facadeFeature = document.getElementById("facadeFeature");
+  if (facadeFeature) facadeFeature.value = "";
+
+  const collapseFacade = document.getElementById("collapseFacade");
+  if (collapseFacade && collapseFacade.classList.contains("show")) {
+    collapseFacade.classList.remove("show");
+  }
+
+  const facadeBtn = document.querySelector('[data-bs-target="#collapseFacade"]');
+  if (facadeBtn) {
+    facadeBtn.classList.add("collapsed");
+    facadeBtn.setAttribute("aria-expanded", "false");
+  }
+
+  if (typeof updatePositionNameFromSelection === "function") {
+    updatePositionNameFromSelection();
+  }
+
+  if (typeof recalcFacade === "function") {
+    recalcFacade();
+  }
+}
+
 document.addEventListener("submit", async (e) => {
   const form = e.target;
-  // Тут підлаштуй селектор під твою форму "Додати позицію"
-  // Напр.: form.id === "addItemForm" або form.querySelector('button[name="add_item"]')
   if (!form.matches("#addItemForm")) return;
 
   e.preventDefault();
@@ -3573,7 +3670,6 @@ document.addEventListener("submit", async (e) => {
   });
 
   if (!resp.ok) {
-    // якщо сервер повернув html (помилка) — можна просто зробити fallback:
     window.location.reload();
     return;
   }
@@ -3586,7 +3682,7 @@ document.addEventListener("submit", async (e) => {
     block.innerHTML = data.items_html;
   }
 
-  // НІЧОГО не чіпаємо зліва => preview/iframe не закриється
+  resetAddItemForm(form);
 });
 </script>
 {% endblock %}

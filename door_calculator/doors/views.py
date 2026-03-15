@@ -337,6 +337,7 @@ def get_item_color(item_id: int | None) -> str:
 def calculate_order(request, order_id):
     order = get_object_or_404(Order, id=order_id)
 
+    is_ajax = request.headers.get("x-requested-with") == "XMLHttpRequest"
     ajax_partial = False  # if True, return JSON with updated items table
 
     categories = Category.objects.prefetch_related("products").all()
@@ -416,7 +417,10 @@ def calculate_order(request, order_id):
             order.customer = customer
             order.save(update_fields=["customer"])
 
-        return redirect("calculate_order", order_id=order.id)
+        if is_ajax:
+            ajax_partial = True
+        else:
+            return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
     # POST: bulk coefficients
@@ -427,34 +431,27 @@ def calculate_order(request, order_id):
         mode = request.POST.get("bulk_mode", "add")
         selected_item_ids = request.POST.getlist("selected_item_ids")
 
-        if not coeff_ids:
-            return redirect("calculate_order", order_id=order.id)
+        if coeff_ids:
+            coefs = list(Coefficient.objects.filter(id__in=coeff_ids))
 
-        coefs = list(Coefficient.objects.filter(id__in=coeff_ids))
+            target_qs = order.items.all()
+            if scope == "selected":
+                target_qs = target_qs.filter(id__in=selected_item_ids)
 
-        target_qs = order.items.all()
-        if scope == "selected":
-            target_qs = target_qs.filter(id__in=selected_item_ids)
+            if mode == "replace":
+                for it in target_qs:
+                    it.coefficients.set(coefs)
+            else:
+                for it in target_qs:
+                    it.coefficients.add(*coefs)
 
-        if mode == "replace":
-            for it in target_qs:
-                it.coefficients.set(coefs)
-        else:
-            for it in target_qs:
-                it.coefficients.add(*coefs)
+            _recalc_order_totals(order)
+            order.refresh_from_db()
 
-        _recalc_order_totals(order)
-        order.refresh_from_db()
-        is_ajax = request.headers.get("x-requested-with") == "XMLHttpRequest"
         if is_ajax:
-            # ВАЖЛИВО: partial використовує parents_with_children + пораховані поля (ks_formula, ks_tooltip, total_cost_value)
-            # Тому треба виконати той самий "GET: prepare" розрахунок перед рендером partial.
-            # Найкраще — винести "GET: prepare" у helper і викликати тут.
-
-            ctx = build_calculate_context(request, order)  # <-- зробимо нижче
-            html = render_to_string("doors/partials/order_items.html", ctx, request=request)
-            return JsonResponse({"ok": True, "items_html": html})
-        return redirect("calculate_order", order_id=order.id)
+            ajax_partial = True
+        else:
+            return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
     # POST: save_markup
@@ -474,7 +471,7 @@ def calculate_order(request, order_id):
         _recalc_order_totals(order)
         order.refresh_from_db()
 
-        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        if is_ajax:
             ajax_partial = True
         else:
             return redirect("calculate_order", order_id=order.id)
@@ -490,7 +487,6 @@ def calculate_order(request, order_id):
 
         if parent_id:
             parent = get_object_or_404(OrderItem, id=parent_id, order=order)
-            # safety: cannot attach to itself
             if parent.id == item.id:
                 parent = None
         else:
@@ -498,7 +494,14 @@ def calculate_order(request, order_id):
 
         item.attached_to = parent
         item.save(update_fields=["attached_to"])
-        return redirect("calculate_order", order_id=order.id)
+
+        _recalc_order_totals(order)
+        order.refresh_from_db()
+
+        if is_ajax:
+            ajax_partial = True
+        else:
+            return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
     # POST: copy item (duplicate existing position inside same order)
@@ -507,7 +510,6 @@ def calculate_order(request, order_id):
         src_id = request.POST.get("copy_item_id")
         src = get_object_or_404(OrderItem, id=src_id, order=order)
 
-        # 1) create new item
         new_item = OrderItem.objects.create(
             order=order,
             name=f"{src.name} (копія)",
@@ -515,15 +517,12 @@ def calculate_order(request, order_id):
             attached_to=src.attached_to,
         )
 
-        # якщо є націнка на позиції — копіюємо
         if hasattr(src, "markup_percent"):
             new_item.markup_percent = src.markup_percent
             new_item.save(update_fields=["markup_percent"])
 
-        # 2) copy coefficients (m2m)
         new_item.coefficients.set(src.coefficients.all())
 
-        # 3) copy products (OrderItemProduct)
         for pi in src.product_items.all():
             OrderItemProduct.objects.create(
                 order_item=new_item,
@@ -531,7 +530,6 @@ def calculate_order(request, order_id):
                 quantity=pi.quantity,
             )
 
-        # 4) copy additions (AdditionItem)
         for ai in src.addition_items.all():
             AdditionItem.objects.create(
                 order_item=new_item,
@@ -540,24 +538,29 @@ def calculate_order(request, order_id):
             )
 
         _recalc_order_totals(order)
-        return redirect("calculate_order", order_id=order.id)
+        order.refresh_from_db()
+
+        if is_ajax:
+            ajax_partial = True
+        else:
+            return redirect("calculate_order", order_id=order.id)
 
     # ============================================================
     # POST: add item
     # ============================================================
     if request.method == "POST" and all(
-            x not in request.POST
-            for x in [
-                "upload_images",
-                "upload_files",
-                "update_file",
-                "delete_file",
-                "assign_customer",
-                "save_markup",
-                "bulk_coefficients",
-                "copy_item",
-                "attach_item",
-            ]
+        x not in request.POST
+        for x in [
+            "upload_images",
+            "upload_files",
+            "update_file",
+            "delete_file",
+            "assign_customer",
+            "save_markup",
+            "bulk_coefficients",
+            "copy_item",
+            "attach_item",
+        ]
     ):
         order_name = (request.POST.get("order_name") or "").strip()
         order_name_template_id = request.POST.get("order_name_template") or ""
@@ -583,23 +586,18 @@ def calculate_order(request, order_id):
 
         calc_mode = (request.POST.get("calc_mode") or "products").strip().lower()
 
-        # NEW: facade_total_ks is primary (methodology result in KS)
         facade_total_ks = _to_decimal_or_none(request.POST.get("facade_total_ks"))
-
-        # BACKWARD COMPAT: old field facade_total_cost (money) if ks not provided
         facade_total_cost = _to_decimal_or_none(request.POST.get("facade_total_cost"))
 
         selected_products = request.POST.getlist("products")
         selected_adds = request.POST.getlist("additions")
         selected_coefs = request.POST.getlist("coefficients")
 
-        # --- Create item (position) ---
         attach_parent_id = request.POST.get("attach_parent_id") or None
         attached_to = None
         if attach_parent_id:
             attached_to = OrderItem.objects.filter(id=attach_parent_id, order=order).first()
 
-        # --- Create item (position) ---
         item = OrderItem.objects.create(
             order=order,
             name=name,
@@ -608,10 +606,9 @@ def calculate_order(request, order_id):
         )
 
         # ============================================================
-        # FACADE MODE (methodology): add as KS carrier, no saving as separate products
+        # FACADE MODE
         # ============================================================
         if calc_mode == "facade":
-            # Prefer KS from methodology
             ks_qty = facade_total_ks
             facade_json = request.POST.get("facade_data_json")
 
@@ -621,7 +618,7 @@ def calculate_order(request, order_id):
                 except Exception:
                     item.facade_data = None
                 item.save(update_fields=["facade_data"])
-            # Fallback: if only money provided (legacy), convert -> ks
+
             if (ks_qty is None or ks_qty <= 0) and facade_total_cost is not None:
                 if price_per_ks <= 0:
                     item.delete()
@@ -637,35 +634,30 @@ def calculate_order(request, order_id):
                 )
                 return redirect("calculate_order", order_id=order.id)
 
-            # keep precision, but avoid too many decimals (you can change to 0.001 if needed)
             ks_qty = ks_qty.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
 
-            # Find or create a single generic product used only as a carrier of KS amount.
             cat = Category.objects.filter(name__iexact="інше").first() or Category.objects.first()
             facade_product, _created = Product.objects.get_or_create(
                 name="Фасад (розрахунок)",
                 defaults={"base_ks": Decimal("1"), "category": cat} if cat else {"base_ks": Decimal("1")},
             )
 
-            # Safety: base_ks must be 1
             if not facade_product.base_ks or Decimal(str(facade_product.base_ks)) != Decimal("1"):
                 facade_product.base_ks = Decimal("1")
                 facade_product.save(update_fields=["base_ks"])
 
-            # IMPORTANT: quantity is KS amount (methodology result)
             OrderItemProduct.objects.create(order_item=item, product=facade_product, quantity=ks_qty)
 
-            # no additions/coeffs from products block in facade mode
             _recalc_order_totals(order)
             order.refresh_from_db()
 
-            if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            if is_ajax:
                 ajax_partial = True
             else:
                 return redirect("calculate_order", order_id=order.id)
 
         # ============================================================
-        # PRODUCTS MODE (default): existing behavior
+        # PRODUCTS MODE
         # ============================================================
         if selected_products:
             for pid in selected_products:
@@ -684,7 +676,7 @@ def calculate_order(request, order_id):
         _recalc_order_totals(order)
         order.refresh_from_db()
 
-        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+        if is_ajax:
             ajax_partial = True
         else:
             return redirect("calculate_order", order_id=order.id)
@@ -699,7 +691,6 @@ def calculate_order(request, order_id):
         "attached_items",
     ).select_related("attached_to")
 
-    # NEW: build parent->children map for "subitems" numbering in template
     parents = [it for it in items if it.attached_to_id is None]
     children_map = {}
     for it in items:
@@ -754,7 +745,6 @@ def calculate_order(request, order_id):
         products_formula = " + ".join(prod_terms) if prod_terms else "0.00"
         adds_formula = " + ".join(add_terms) if add_terms else "0.00"
         coef_part = f" × {' × '.join(coef_terms)}" if coef_terms else ""
-        coef_display_line = f"Коефіцієнт: {_q2(coef)}" if coef_terms else ""
 
         it.ks_formula = f"(({products_formula}) + ({adds_formula})) × {qty}{coef_part}"
 
@@ -770,7 +760,6 @@ def calculate_order(request, order_id):
         effective_ks += ks_effective
         formula_terms.append(f"{ks_effective:.2f}")
 
-        # markup
         item_markup = it.markup_percent
         m = Decimal(str(item_markup)) if item_markup is not None else order_markup
 
@@ -780,7 +769,6 @@ def calculate_order(request, order_id):
         it.total_cost_value = final_price
         total_sum += final_price
 
-        # tooltip
         NL = "\n"
         prod_lines = [
             f"• {op.product.name}: {_q2(Decimal(str(op.product.base_ks)))} × {Decimal(op.quantity)} = "
@@ -810,7 +798,6 @@ def calculate_order(request, order_id):
             f"{tail}"
         )
 
-    # ===== NEW: use SAME computed instances for children rendering (fix blank ks/price in subitems) =====
     parents_with_children = []
     for p in parents:
         kids = children_map.get(p.id, [])
@@ -823,7 +810,6 @@ def calculate_order(request, order_id):
     global_coeffs = Coefficient.objects.filter(applies_globally=True).order_by("name")
     category_coeffs = Coefficient.objects.filter(applies_globally=False).order_by("name")
 
-    # ====== ДОПОВНЕННЯ: глобальні + по категоріях (НОВЕ) ======
     addons_global = Addition.objects.filter(applies_globally=True).order_by("name")
 
     addons_by_category = []
@@ -859,14 +845,9 @@ def calculate_order(request, order_id):
         "products": products,
         "global_coeffs": global_coeffs,
         "category_coeffs": category_coeffs,
-
-        # старе поле залишив для сумісності (якщо шаблон ще його використовує)
         "addons": addons_global,
-
-        # нові поля для відображення по категоріях + згортання
         "addons_global": addons_global,
         "addons_by_category": addons_by_category,
-
         "rate": price_per_ks,
         "items": items,
         "parents": parents,
@@ -879,12 +860,12 @@ def calculate_order(request, order_id):
         "formula_expression": formula_expression,
         "order_name_templates": order_name_templates,
     }
+
     if ajax_partial:
         html = render_to_string("doors/partials/order_items.html", context, request=request)
         return JsonResponse({"ok": True, "items_html": html})
 
     return render(request, "doors/calculate_order.html", context)
-
 
 def _draw_common_header(p, width, height, company, base_font):
     """

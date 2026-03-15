@@ -13,7 +13,16 @@
       </div>
       <div class="col-md-4">
         <label class="form-label fw-bold">Кількість позицій</label>
-        <input type="number" name="quantity" min="0" class="form-control" value="{{ product_qty.p.id|default:1 }}"">
+
+        {% load l10n %}
+        <input
+            type="number"
+            name="quantity"
+            min="0"
+            step="0.01"
+            class="form-control"
+            value="{{ item.quantity|unlocalize }}"
+        >
       </div>
     </div>
     {% if is_facade_item %}
