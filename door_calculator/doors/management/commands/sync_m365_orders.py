@@ -37,6 +37,21 @@ def _is_image(name: str) -> bool:
     return ext in IMAGE_EXTS
 
 
+def _is_our_pdf(name: str) -> bool:
+    if not name:
+        return False
+
+    name = name.lower()
+
+    if not name.endswith(".pdf"):
+        return False
+
+    return (
+        "попередній_" in name
+        or "фінальний_" in name
+    )
+
+
 def _parse_m365_created_dt(item: dict):
     raw = (item or {}).get("createdDateTime")
     if not raw:
@@ -270,6 +285,9 @@ class Command(BaseCommand):
                                         created_images += 1
 
                                 else:
+
+                                    if _is_our_pdf(name):
+                                        continue
 
                                     if not OrderFile.objects.filter(
                                         remote_item_id=file_id
