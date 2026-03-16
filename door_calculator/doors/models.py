@@ -83,6 +83,26 @@ class Addition(models.Model):
         verbose_name="Вироби",
         help_text="Доступне для конкретних виробів."
     )
+    extra_ks_value = models.DecimalField(
+        "Значення к/с після базової кількості",
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        help_text="Якщо задано — застосовується до кількості понад base_qty_limit."
+    )
+
+    base_qty_limit = models.PositiveIntegerField(
+        "Базова кількість",
+        default=999,
+        help_text="До цієї кількості включно використовується ks_value."
+    )
+
+    disallow_above_limit = models.BooleanField(
+        "Не дозволяти кількість вище базової",
+        default=False,
+        help_text="Наприклад для маятникових петель."
+    )
 
     def __str__(self):
         return f"{self.name}={self.ks_value}"
@@ -551,26 +571,6 @@ class AdditionItem(models.Model):
     order_item = models.ForeignKey(OrderItem, on_delete=models.CASCADE, related_name="addition_items")
     addition = models.ForeignKey(Addition, on_delete=models.CASCADE)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1)
-    extra_ks_value = models.DecimalField(
-        "Значення к/с після базової кількості",
-        max_digits=10,
-        decimal_places=3,
-        null=True,
-        blank=True,
-        help_text="Якщо задано — застосовується до кількості понад base_qty_limit."
-    )
-
-    base_qty_limit = models.PositiveIntegerField(
-        "Базова кількість",
-        default=999,
-        help_text="До цієї кількості включно використовується ks_value."
-    )
-
-    disallow_above_limit = models.BooleanField(
-        "Не дозволяти кількість вище базової",
-        default=False,
-        help_text="Наприклад для маятникових петель."
-    )
 
     def total_ks(self):
         addition = self.addition
