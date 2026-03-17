@@ -1188,7 +1188,7 @@ def generate_pdf(request, order_id):
 
         hours_total = (total_ks / Decimal("0.75"))
         hours_per_day_all_workers = Decimal("2") * Decimal("8")
-        days_raw = hours_total / hours_per_day_all_workers
+        days_raw = days_raw = hours_total / hours_per_day_all_workers
         days_with_margin = days_raw * Decimal("1.3")
 
         days_int = int(days_with_margin.to_integral_value(rounding=ROUND_HALF_UP))
@@ -1636,7 +1636,6 @@ def generate_pdf(request, order_id):
     response = HttpResponse(buffer, content_type="application/pdf")
     response["Content-Disposition"] = f'inline; filename="{filename}"'
     return response
-
 
 def worklog_list(request):
     # Отримуємо всі записи
