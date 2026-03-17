@@ -1884,222 +1884,275 @@ body.preview-only #sketchHidePart{
       </div>
 
 <div class="mb-3">
-<label class="form-label fw-bold">Доповнення (з кількістю):</label>
+  <label class="form-label fw-bold">Доповнення (з кількістю):</label>
 
-<div class="addons-categories-grid">
+  <div class="addons-categories-grid">
 
-<!-- ЛІВА КОЛОНКА -->
+    <!-- ЛІВА КОЛОНКА -->
 <div class="addons-col">
 
-<!-- двері -->
+  <!-- двері -->
+  {% for row in addons_by_category %}
+    {% with cat=row.cat cat_adds=row.addons %}
+      {% if cat.name|lower == 'двері' %}
+      <div class="category-card border rounded p-3 mb-3">
+        <div class="category-header" data-target="add-body-{{ cat.id }}">
+          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+          <button type="button"
+                  class="category-toggle-btn btn btn-sm p-0 collapsed"
+                  data-target="add-body-{{ cat.id }}">
+            <span class="icon">▾</span>
+            <span class="text">Розгорнути</span>
+          </button>
+        </div>
+
+        <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+          {% for a in cat_adds %}
+          <div class="input-group mb-2 addon-row">
+            <div class="input-group-text">
+              <input type="checkbox"
+                     name="additions"
+                     value="{{ a.id }}"
+                     class="form-check-input mt-0">
+            </div>
+            <span class="input-group-text addon-name">{{ a.name }}</span>
+            <input type="number"
+                   name="add_qty_{{ a.id }}"
+                   min="1"
+                   value="1"
+                   class="form-control form-control-sm addon-qty">
+            <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+          </div>
+          {% empty %}
+          <div class="text-muted small">Немає доповнень</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    {% endwith %}
+  {% endfor %}
+
+
+  <!-- загальні -->
 {% for row in addons_by_category %}
-{% with cat=row.cat cat_adds=row.addons %}
-{% if cat.name|lower == 'двері' %}
+  {% with cat=row.cat cat_adds=row.addons %}
+    {% if cat.name|lower != 'двері'
+       and cat.name|lower != 'ворота'
+       and cat.name|lower != 'вікно'
+       and cat.name|lower != 'паралельно-зсувна'
+       and cat.name|lower != 'петлі' %}
 
-<div class="category-card border rounded p-3 mb-3">
-<div class="category-header" data-target="add-body-{{ cat.id }}">
-<h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-<button type="button" class="category-toggle-btn btn btn-sm p-0 collapsed" data-target="add-body-{{ cat.id }}">
-<span class="icon">▾</span>
-<span class="text">Розгорнути</span>
-</button>
-</div>
+    <div class="category-card border rounded p-3 mb-3">
+      <div class="category-header" data-target="add-body-{{ cat.id }}">
+        <h6 class="fw-bold mb-0">🧩 {{ cat.name }}</h6>
+        <button type="button"
+                class="category-toggle-btn btn btn-sm p-0 collapsed"
+                data-target="add-body-{{ cat.id }}">
+          <span class="icon">▾</span>
+          <span class="text">Розгорнути</span>
+        </button>
+      </div>
 
-<div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-{% for a in cat_adds %}
-<div class="input-group mb-2 addon-row">
-<div class="input-group-text">
-<input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
-</div>
-<span class="input-group-text addon-name">{{ a.name }}</span>
-<input type="number" name="add_qty_{{ a.id }}" min="1" value="1" class="form-control form-control-sm addon-qty">
-<span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-</div>
-{% endfor %}
-</div>
-</div>
+      <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+        {% for a in cat_adds %}
+        <div class="input-group mb-2 addon-row">
+          <div class="input-group-text">
+            <input type="checkbox"
+                   name="additions"
+                   value="{{ a.id }}"
+                   class="form-check-input mt-0">
+          </div>
+          <span class="input-group-text addon-name">{{ a.name }}</span>
+          <input type="number"
+                 name="add_qty_{{ a.id }}"
+                 min="1"
+                 value="1"
+                 class="form-control form-control-sm addon-qty">
+          <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+        </div>
+        {% empty %}
+        <div class="text-muted small">Немає доповнень</div>
+        {% endfor %}
+      </div>
+    </div>
 
-{% endif %}
-{% endwith %}
-{% endfor %}
-
-
-<!-- ЗАГАЛЬНІ -->
-{% for row in addons_by_category %}
-{% with cat=row.cat cat_adds=row.addons %}
-{% if cat.name|lower != 'двері'
-   and cat.name|lower != 'ворота'
-   and cat.name|lower != 'вікно'
-   and cat.name|lower != 'паралельно-зсувна'
-   and cat.name|lower != 'петлі' %}
-
-<div class="category-card border rounded p-3 mb-3">
-<div class="category-header" data-target="add-body-{{ cat.id }}">
-<h6 class="fw-bold mb-0">🧩 {{ cat.name }}</h6>
-<button type="button" class="category-toggle-btn btn btn-sm p-0 collapsed" data-target="add-body-{{ cat.id }}">
-<span class="icon">▾</span>
-<span class="text">Розгорнути</span>
-</button>
-</div>
-
-<div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-{% for a in cat_adds %}
-<div class="input-group mb-2 addon-row">
-<div class="input-group-text">
-<input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
-</div>
-<span class="input-group-text addon-name">{{ a.name }}</span>
-<input type="number" name="add_qty_{{ a.id }}" min="1" value="1" class="form-control form-control-sm addon-qty">
-<span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-</div>
-{% endfor %}
-</div>
-</div>
-
-{% endif %}
-{% endwith %}
+    {% endif %}
+  {% endwith %}
 {% endfor %}
 
 
-<!-- ворота -->
-{% for row in addons_by_category %}
-{% with cat=row.cat cat_adds=row.addons %}
-{% if cat.name|lower == 'ворота' %}
+  <!-- ворота -->
+  {% for row in addons_by_category %}
+    {% with cat=row.cat cat_adds=row.addons %}
+      {% if cat.name|lower == 'ворота' %}
+      <div class="category-card border rounded p-3 mb-3">
+        <div class="category-header" data-target="add-body-{{ cat.id }}">
+          <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+          <button type="button"
+                  class="category-toggle-btn btn btn-sm p-0 collapsed"
+                  data-target="add-body-{{ cat.id }}">
+            <span class="icon">▾</span>
+            <span class="text">Розгорнути</span>
+          </button>
+        </div>
 
-<div class="category-card border rounded p-3 mb-3">
-<div class="category-header" data-target="add-body-{{ cat.id }}">
-<h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-<button type="button" class="category-toggle-btn btn btn-sm p-0 collapsed" data-target="add-body-{{ cat.id }}">
-<span class="icon">▾</span>
-<span class="text">Розгорнути</span>
-</button>
-</div>
-
-<div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-{% for a in cat_adds %}
-<div class="input-group mb-2 addon-row">
-<div class="input-group-text">
-<input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
-</div>
-<span class="input-group-text addon-name">{{ a.name }}</span>
-<input type="number" name="add_qty_{{ a.id }}" min="1" value="1" class="form-control form-control-sm addon-qty">
-<span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-</div>
-{% endfor %}
-</div>
-</div>
-
-{% endif %}
-{% endwith %}
-{% endfor %}
-
-</div>
-
-
-<!-- ПРАВА КОЛОНКА -->
-<div class="addons-col">
-
-<!-- вікно -->
-{% for row in addons_by_category %}
-{% with cat=row.cat cat_adds=row.addons %}
-{% if cat.name|lower == 'вікно' %}
-
-<div class="category-card border rounded p-3 mb-3">
-<div class="category-header" data-target="add-body-{{ cat.id }}">
-<h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-<button type="button" class="category-toggle-btn btn btn-sm p-0 collapsed" data-target="add-body-{{ cat.id }}">
-<span class="icon">▾</span>
-<span class="text">Розгорнути</span>
-</button>
-</div>
-
-<div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-{% for a in cat_adds %}
-<div class="input-group mb-2 addon-row">
-<div class="input-group-text">
-<input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
-</div>
-<span class="input-group-text addon-name">{{ a.name }}</span>
-<input type="number" name="add_qty_{{ a.id }}" min="1" value="1" class="form-control form-control-sm addon-qty">
-<span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-</div>
-{% endfor %}
-</div>
-</div>
-
-{% endif %}
-{% endwith %}
-{% endfor %}
-
-
-<!-- паралельно-зсувна -->
-{% for row in addons_by_category %}
-{% with cat=row.cat cat_adds=row.addons %}
-{% if cat.name|lower == 'паралельно-зсувна' %}
-
-<div class="category-card border rounded p-3 mb-3">
-<div class="category-header" data-target="add-body-{{ cat.id }}">
-<h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-<button type="button" class="category-toggle-btn btn btn-sm p-0 collapsed" data-target="add-body-{{ cat.id }}">
-<span class="icon">▾</span>
-<span class="text">Розгорнути</span>
-</button>
-</div>
-
-<div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-{% for a in cat_adds %}
-<div class="input-group mb-2 addon-row">
-<div class="input-group-text">
-<input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
-</div>
-<span class="input-group-text addon-name">{{ a.name }}</span>
-<input type="number" name="add_qty_{{ a.id }}" min="1" value="1" class="form-control form-control-sm addon-qty">
-<span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-</div>
-{% endfor %}
-</div>
-</div>
-
-{% endif %}
-{% endwith %}
-{% endfor %}
-
-
-<!-- петлі -->
-{% for row in addons_by_category %}
-{% with cat=row.cat cat_adds=row.addons %}
-{% if cat.name|lower == 'петлі' %}
-
-<div class="category-card border rounded p-3 mb-3">
-<div class="category-header" data-target="add-body-{{ cat.id }}">
-<h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-<button type="button" class="category-toggle-btn btn btn-sm p-0 collapsed" data-target="add-body-{{ cat.id }}">
-<span class="icon">▾</span>
-<span class="text">Розгорнути</span>
-</button>
-</div>
-
-<div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-{% for a in cat_adds %}
-<div class="input-group mb-2 addon-row">
-<div class="input-group-text">
-<input type="checkbox" name="additions" value="{{ a.id }}" class="form-check-input mt-0">
-</div>
-<span class="input-group-text addon-name">{{ a.name }}</span>
-<input type="number" name="add_qty_{{ a.id }}" min="1" value="1" class="form-control form-control-sm addon-qty">
-<span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-</div>
-{% endfor %}
-</div>
-</div>
-
-{% endif %}
-{% endwith %}
-{% endfor %}
+        <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+          {% for a in cat_adds %}
+          <div class="input-group mb-2 addon-row">
+            <div class="input-group-text">
+              <input type="checkbox"
+                     name="additions"
+                     value="{{ a.id }}"
+                     class="form-check-input mt-0">
+            </div>
+            <span class="input-group-text addon-name">{{ a.name }}</span>
+            <input type="number"
+                   name="add_qty_{{ a.id }}"
+                   min="1"
+                   value="1"
+                   class="form-control form-control-sm addon-qty">
+            <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+          </div>
+          {% empty %}
+          <div class="text-muted small">Немає доповнень</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+    {% endwith %}
+  {% endfor %}
 
 </div>
 
-</div>
+    <!-- ПРАВА КОЛОНКА -->
+    <div class="addons-col">
+
+      <!-- вікно -->
+      {% for row in addons_by_category %}
+        {% with cat=row.cat cat_adds=row.addons %}
+          {% if cat.name|lower == 'вікно' %}
+            <div class="category-card border rounded p-3 mb-3">
+              <div class="category-header" data-target="add-body-{{ cat.id }}">
+                <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+                <button type="button"
+                        class="category-toggle-btn btn btn-sm p-0 collapsed"
+                        data-target="add-body-{{ cat.id }}">
+                  <span class="icon">▾</span>
+                  <span class="text">Розгорнути</span>
+                </button>
+              </div>
+
+              <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+                {% for a in cat_adds %}
+                  <div class="input-group mb-2 addon-row">
+                    <div class="input-group-text">
+                      <input type="checkbox"
+                             name="additions"
+                             value="{{ a.id }}"
+                             class="form-check-input mt-0">
+                    </div>
+                    <span class="input-group-text addon-name">{{ a.name }}</span>
+                    <input type="number"
+                           name="add_qty_{{ a.id }}"
+                           min="1"
+                           value="1"
+                           class="form-control form-control-sm addon-qty">
+                    <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+                  </div>
+                {% empty %}
+                  <div class="text-muted small">Немає доповнень</div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        {% endwith %}
+      {% endfor %}
+
+      <!-- паралельно-зсувна -->
+      {% for row in addons_by_category %}
+        {% with cat=row.cat cat_adds=row.addons %}
+          {% if cat.name|lower == 'паралельно-зсувна' %}
+            <div class="category-card border rounded p-3 mb-3">
+              <div class="category-header" data-target="add-body-{{ cat.id }}">
+                <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+                <button type="button"
+                        class="category-toggle-btn btn btn-sm p-0 collapsed"
+                        data-target="add-body-{{ cat.id }}">
+                  <span class="icon">▾</span>
+                  <span class="text">Розгорнути</span>
+                </button>
+              </div>
+
+              <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+                {% for a in cat_adds %}
+                  <div class="input-group mb-2 addon-row">
+                    <div class="input-group-text">
+                      <input type="checkbox"
+                             name="additions"
+                             value="{{ a.id }}"
+                             class="form-check-input mt-0">
+                    </div>
+                    <span class="input-group-text addon-name">{{ a.name }}</span>
+                    <input type="number"
+                           name="add_qty_{{ a.id }}"
+                           min="1"
+                           value="1"
+                           class="form-control form-control-sm addon-qty">
+                    <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+                  </div>
+                {% empty %}
+                  <div class="text-muted small">Немає доповнень</div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        {% endwith %}
+      {% endfor %}
+
+      <!-- петлі -->
+      {% for row in addons_by_category %}
+        {% with cat=row.cat cat_adds=row.addons %}
+          {% if cat.name|lower == 'петлі' %}
+            <div class="category-card border rounded p-3 mb-3">
+              <div class="category-header" data-target="add-body-{{ cat.id }}">
+                <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+                <button type="button"
+                        class="category-toggle-btn btn btn-sm p-0 collapsed"
+                        data-target="add-body-{{ cat.id }}">
+                  <span class="icon">▾</span>
+                  <span class="text">Розгорнути</span>
+                </button>
+              </div>
+
+              <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+                {% for a in cat_adds %}
+                  <div class="input-group mb-2 addon-row">
+                    <div class="input-group-text">
+                      <input type="checkbox"
+                             name="additions"
+                             value="{{ a.id }}"
+                             class="form-check-input mt-0">
+                    </div>
+                    <span class="input-group-text addon-name">{{ a.name }}</span>
+                    <input type="number"
+                           name="add_qty_{{ a.id }}"
+                           min="1"
+                           value="1"
+                           class="form-control form-control-sm addon-qty">
+                    <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+                  </div>
+                {% empty %}
+                  <div class="text-muted small">Немає доповнень</div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        {% endwith %}
+      {% endfor %}
+
+    </div>
+
+  </div>
 </div>
         <div class="mb-2">
           <label class="form-label fw-bold">Прикріпити до (зробити підпунктом)</label>
