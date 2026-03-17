@@ -1284,13 +1284,13 @@ def generate_pdf(request, order_id):
     cell_center_style = ParagraphStyle(
         name="CellCenterStyle",
         parent=cell_style,
-        alignment=TA_CENTER,
+        alignment=1,
     )
 
     cell_right_style = ParagraphStyle(
         name="CellRightStyle",
         parent=cell_style,
-        alignment=TA_RIGHT,
+        alignment=2,
     )
 
     formula_style = ParagraphStyle(
