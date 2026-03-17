@@ -1513,6 +1513,9 @@ def generate_pdf(request, order_id):
     if not simple_mode and item_costs:
         main_data = [["№", "Позиція", "Кількість", "Вартість за одиницю, грн", "Сума, грн"]]
 
+        total_qty_sum = Decimal("0")
+        total_sum_all = Decimal("0")
+
         for idx, (it, raw_dec) in enumerate(item_costs, start=1):
             total_with_markup = (raw_dec * markup_factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             qty = to_decimal(getattr(it, "quantity", 1) or 1, "1")
@@ -1522,6 +1525,9 @@ def generate_pdf(request, order_id):
                 else Decimal("0.00")
             )
 
+            total_qty_sum += qty
+            total_sum_all += total_with_markup
+
             main_data.append([
                 str(idx),
                 Paragraph(safe_text(getattr(it, "name", "")), cell_style),
@@ -1529,6 +1535,14 @@ def generate_pdf(request, order_id):
                 f"{unit_cost:.2f}",
                 f"{total_with_markup:.2f}"
             ])
+
+        main_data.append([
+            "",
+            Paragraph("Разом", cell_style),
+            fmt_qty(total_qty_sum),
+            "",
+            f"{total_sum_all:.2f}"
+        ])
 
         main_table = Table(main_data, colWidths=[30, 250, 60, 110, 90])
         main_table.setStyle(TableStyle([

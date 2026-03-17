@@ -250,7 +250,7 @@ class Order(models.Model):
         ("-----", "-----"),
     ]
     WORK_TYPE_CHOICES = [
-        ("project", "об'єкт"),
+        ("project", "Об'єкт"),
         ("rework", "Переробка"),
     ]
     price_per_ks = models.DecimalField(
