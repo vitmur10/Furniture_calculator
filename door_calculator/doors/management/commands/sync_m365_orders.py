@@ -72,6 +72,10 @@ def get_type_letter(site_name: str) -> str:
     return "П" if "перероб" in (site_name or "").lower() else "О"
 
 
+def get_work_type(site_name: str) -> str:
+    return "rework" if "перероб" in (site_name or "").lower() else "project"
+
+
 def make_order_number_base(folder: dict, site_name: str) -> str:
     created_dt = _parse_m365_created_dt(folder)
     date_part = created_dt.strftime("%d.%m.%y")
@@ -257,10 +261,31 @@ class Command(BaseCommand):
                         remote_folder_id=folder_id,
                     ).first()
 
+                    expected_work_type = get_work_type(site_name)
+
+                    if order:
+                        changed = False
+
+                        if order.work_type != expected_work_type:
+                            order.work_type = expected_work_type
+                            changed = True
+
+                        if order.order_name != folder_name:
+                            order.order_name = folder_name
+                            changed = True
+
+                        if order.remote_web_url != folder_url:
+                            order.remote_web_url = folder_url
+                            changed = True
+
+                        if changed:
+                            order.save(update_fields=["work_type", "order_name", "remote_web_url"])
+
                     if not order:
                         order = Order.objects.create(
                             order_name=folder_name,
                             order_number=make_unique_order_number(folder, site_name),
+                            work_type=expected_work_type,
                             source="m365",
                             remote_site_id=site["id"],
                             remote_drive_id=drive_id,

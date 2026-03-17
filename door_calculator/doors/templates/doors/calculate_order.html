@@ -1888,271 +1888,87 @@ body.preview-only #sketchHidePart{
 
   <div class="addons-categories-grid">
 
-    <!-- Ліва колонка: Двері → Розсувна → Загальні -->
-    <div class="addons-col d-flex flex-column gap-2">
-
-      {# ===== Двері ===== #}
+    <!-- ЛІВА КОЛОНКА -->
+    <div class="addons-col">
       {% for row in addons_by_category %}
         {% with cat=row.cat cat_adds=row.addons %}
-          {% if cat.name|lower == 'двері' %}
-          <div class="category-card border rounded p-3 mb-3">
-            <div class="category-header" data-target="add-body-{{ cat.id }}">
-              <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-              <button type="button"
-                      class="category-toggle-btn btn btn-sm p-0 collapsed"
-                      data-target="add-body-{{ cat.id }}">
-                <span class="icon">▾</span>
-                <span class="text">Розгорнути</span>
-              </button>
-            </div>
-
-            <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-              {% for a in cat_adds %}
-              <div class="input-group mb-2 addon-row">
-                <div class="input-group-text">
-                  <input type="checkbox"
-                         name="additions"
-                         value="{{ a.id }}"
-                         class="form-check-input mt-0">
-                </div>
-
-                <span class="input-group-text addon-name">{{ a.name }}</span>
-
-                <input type="number"
-                       name="add_qty_{{ a.id }}"
-                       min="1"
-                       value="1"
-                       class="form-control form-control-sm addon-qty">
-
-                <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+          {% if cat.name|lower == 'двері' or cat.name|lower == 'загальні' or cat.name|lower == 'ворота' %}
+            <div class="category-card border rounded p-3 mb-3">
+              <div class="category-header" data-target="add-body-{{ cat.id }}">
+                <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+                <button type="button"
+                        class="category-toggle-btn btn btn-sm p-0 collapsed"
+                        data-target="add-body-{{ cat.id }}">
+                  <span class="icon">▾</span>
+                  <span class="text">Розгорнути</span>
+                </button>
               </div>
-              {% empty %}
-                <div class="text-muted small">Немає доповнень</div>
-              {% endfor %}
+
+              <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+                {% for a in cat_adds %}
+                <div class="input-group mb-2 addon-row">
+                  <div class="input-group-text">
+                    <input type="checkbox"
+                           name="additions"
+                           value="{{ a.id }}"
+                           class="form-check-input mt-0">
+                  </div>
+                  <span class="input-group-text addon-name">{{ a.name }}</span>
+                  <input type="number"
+                         name="add_qty_{{ a.id }}"
+                         min="1"
+                         value="1"
+                         class="form-control form-control-sm addon-qty">
+                  <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+                </div>
+                {% empty %}
+                  <div class="text-muted small">Немає доповнень</div>
+                {% endfor %}
+              </div>
             </div>
-          </div>
           {% endif %}
         {% endwith %}
       {% endfor %}
-
-      {# ===== Розсувна ===== #}
-      {% for row in addons_by_category %}
-        {% with cat=row.cat cat_adds=row.addons %}
-          {% if cat.name|lower == 'розсувна' %}
-          <div class="category-card border rounded p-3 mb-3">
-            <div class="category-header" data-target="add-body-{{ cat.id }}">
-              <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-              <button type="button"
-                      class="category-toggle-btn btn btn-sm p-0 collapsed"
-                      data-target="add-body-{{ cat.id }}">
-                <span class="icon">▾</span>
-                <span class="text">Розгорнути</span>
-              </button>
-            </div>
-
-            <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-              {% for a in cat_adds %}
-              <div class="input-group mb-2 addon-row">
-                <div class="input-group-text">
-                  <input type="checkbox"
-                         name="additions"
-                         value="{{ a.id }}"
-                         class="form-check-input mt-0">
-                </div>
-
-                <span class="input-group-text addon-name">{{ a.name }}</span>
-
-                <input type="number"
-                       name="add_qty_{{ a.id }}"
-                       min="1"
-                       value="1"
-                       class="form-control form-control-sm addon-qty">
-
-                <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-              </div>
-              {% empty %}
-                <div class="text-muted small">Немає доповнень</div>
-              {% endfor %}
-            </div>
-          </div>
-          {% endif %}
-        {% endwith %}
-      {% endfor %}
-
-      {# ===== Загальні ===== #}
-      <div class="category-card border rounded p-3 mb-3">
-        <div class="category-header" data-target="add-body-global">
-          <h6 class="fw-bold mb-0">🧩 Загальні</h6>
-          <button type="button"
-                  class="category-toggle-btn btn btn-sm p-0 collapsed"
-                  data-target="add-body-global">
-            <span class="icon">▾</span>
-            <span class="text">Розгорнути</span>
-          </button>
-        </div>
-
-        <div id="add-body-global" class="category-body mt-2 collapsed">
-          {% for a in addons_global %}
-          <div class="input-group mb-2 addon-row">
-            <div class="input-group-text">
-              <input type="checkbox"
-                     name="additions"
-                     value="{{ a.id }}"
-                     class="form-check-input mt-0">
-            </div>
-
-            <span class="input-group-text addon-name">{{ a.name }}</span>
-
-            <input type="number"
-                   name="add_qty_{{ a.id }}"
-                   min="1"
-                   value="1"
-                   class="form-control form-control-sm addon-qty">
-
-            <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-          </div>
-          {% empty %}
-            <div class="text-muted small">Немає доповнень</div>
-          {% endfor %}
-        </div>
-      </div>
-
     </div>
 
-    <!-- Права колонка: Вікно → Фасад -->
-    <div class="addons-col d-flex flex-column gap-2">
-
-      {# ===== Вікно ===== #}
+    <!-- ПРАВА КОЛОНКА -->
+    <div class="addons-col">
       {% for row in addons_by_category %}
         {% with cat=row.cat cat_adds=row.addons %}
-          {% if cat.name|lower == 'вікно' %}
-          <div class="category-card border rounded p-3 mb-3">
-            <div class="category-header" data-target="add-body-{{ cat.id }}">
-              <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-              <button type="button"
-                      class="category-toggle-btn btn btn-sm p-0 collapsed"
-                      data-target="add-body-{{ cat.id }}">
-                <span class="icon">▾</span>
-                <span class="text">Розгорнути</span>
-              </button>
-            </div>
-
-            <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-              {% for a in cat_adds %}
-              <div class="input-group mb-2 addon-row">
-                <div class="input-group-text">
-                  <input type="checkbox"
-                         name="additions"
-                         value="{{ a.id }}"
-                         class="form-check-input mt-0">
-                </div>
-
-                <span class="input-group-text addon-name">{{ a.name }}</span>
-
-                <input type="number"
-                       name="add_qty_{{ a.id }}"
-                       min="1"
-                       value="1"
-                       class="form-control form-control-sm addon-qty">
-
-                <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+          {% if cat.name|lower == 'вікно' or cat.name|lower == 'паралельно-зсувна' or cat.name|lower == 'петлі' %}
+            <div class="category-card border rounded p-3 mb-3">
+              <div class="category-header" data-target="add-body-{{ cat.id }}">
+                <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
+                <button type="button"
+                        class="category-toggle-btn btn btn-sm p-0 collapsed"
+                        data-target="add-body-{{ cat.id }}">
+                  <span class="icon">▾</span>
+                  <span class="text">Розгорнути</span>
+                </button>
               </div>
-              {% empty %}
-                <div class="text-muted small">Немає доповнень</div>
-              {% endfor %}
-            </div>
-          </div>
-          {% endif %}
-        {% endwith %}
-      {% endfor %}
 
-      {# ===== Фасад ===== #}
-      {% for row in addons_by_category %}
-        {% with cat=row.cat cat_adds=row.addons %}
-          {% if cat.name|lower == 'фасад' %}
-          <div class="category-card border rounded p-3 mb-3">
-            <div class="category-header" data-target="add-body-{{ cat.id }}">
-              <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-              <button type="button"
-                      class="category-toggle-btn btn btn-sm p-0 collapsed"
-                      data-target="add-body-{{ cat.id }}">
-                <span class="icon">▾</span>
-                <span class="text">Розгорнути</span>
-              </button>
-            </div>
-
-            <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-              {% for a in cat_adds %}
-              <div class="input-group mb-2 addon-row">
-                <div class="input-group-text">
-                  <input type="checkbox"
-                         name="additions"
-                         value="{{ a.id }}"
-                         class="form-check-input mt-0">
+              <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
+                {% for a in cat_adds %}
+                <div class="input-group mb-2 addon-row">
+                  <div class="input-group-text">
+                    <input type="checkbox"
+                           name="additions"
+                           value="{{ a.id }}"
+                           class="form-check-input mt-0">
+                  </div>
+                  <span class="input-group-text addon-name">{{ a.name }}</span>
+                  <input type="number"
+                         name="add_qty_{{ a.id }}"
+                         min="1"
+                         value="1"
+                         class="form-control form-control-sm addon-qty">
+                  <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
                 </div>
-
-                <span class="input-group-text addon-name">{{ a.name }}</span>
-
-                <input type="number"
-                       name="add_qty_{{ a.id }}"
-                       min="1"
-                       value="1"
-                       class="form-control form-control-sm addon-qty">
-
-                <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
+                {% empty %}
+                  <div class="text-muted small">Немає доповнень</div>
+                {% endfor %}
               </div>
-              {% empty %}
-                <div class="text-muted small">Немає доповнень</div>
-              {% endfor %}
             </div>
-          </div>
-          {% endif %}
-        {% endwith %}
-      {% endfor %}
-
-    </div>
-
-    {# ===== Інші категорії (якщо є) — нижче на всю ширину ===== #}
-    <div class="addons-col d-flex flex-column gap-2" style="grid-column: 1 / -1;">
-      {% for row in addons_by_category %}
-        {% with cat=row.cat cat_adds=row.addons %}
-          {% if cat.name|lower != 'двері' and cat.name|lower != 'розсувна' and cat.name|lower != 'вікно' and cat.name|lower != 'фасад' %}
-          <div class="category-card border rounded p-3 mb-3">
-            <div class="category-header" data-target="add-body-{{ cat.id }}">
-              <h6 class="fw-bold mb-0">📦 {{ cat.name }}</h6>
-              <button type="button"
-                      class="category-toggle-btn btn btn-sm p-0 collapsed"
-                      data-target="add-body-{{ cat.id }}">
-                <span class="icon">▾</span>
-                <span class="text">Розгорнути</span>
-              </button>
-            </div>
-
-            <div id="add-body-{{ cat.id }}" class="category-body mt-2 collapsed">
-              {% for a in cat_adds %}
-              <div class="input-group mb-2 addon-row">
-                <div class="input-group-text">
-                  <input type="checkbox"
-                         name="additions"
-                         value="{{ a.id }}"
-                         class="form-check-input mt-0">
-                </div>
-
-                <span class="input-group-text addon-name">{{ a.name }}</span>
-
-                <input type="number"
-                       name="add_qty_{{ a.id }}"
-                       min="1"
-                       value="1"
-                       class="form-control form-control-sm addon-qty">
-
-                <span class="input-group-text addon-ks">{{ a.ks_value }} к/с</span>
-              </div>
-              {% empty %}
-                <div class="text-muted small">Немає доповнень</div>
-              {% endfor %}
-            </div>
-          </div>
           {% endif %}
         {% endwith %}
       {% endfor %}
@@ -2538,91 +2354,6 @@ body.preview-only #sketchHidePart{
   };
 </script>
 <script>
-const syncStatus = document.getElementById("syncStatus");
-const chooser = document.getElementById("syncFolderChooser");
-
-const orderId = "{{ order.id }}";  // або як ти передаєш id
-const syncUrl = `/orders/${orderId}/sync-internal-pdf/`;
-
-function setStatus(text, cls = "text-muted") {
-  syncStatus.className = "ms-2 " + cls;
-  syncStatus.textContent = text;
-}
-
-async function runSync(mode, extraPayload = {}) {
-  chooser.innerHTML = "";
-  setStatus("Синхронізація…", "text-muted");
-
-  const payload = {
-    mode: mode,
-    markup: window.ORDER_MARKUP || 0,
-    delivery: window.ORDER_DELIVERY || 0,
-    packing: window.ORDER_PACKING || 0,
-    ...extraPayload
-  };
-
-  const resp = await fetch(syncUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": "{{ csrf_token }}"
-    },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await resp.json();
-
-  // ✅ Успіх
-  if (resp.ok && data.ok) {
-    setStatus(`✅ Синхронізовано (${data.uploaded_to} папк.)`, "text-success");
-    return;
-  }
-
-  // 🔁 Потрібен вибір папки
-  if (resp.status === 409 && data.candidates) {
-    setStatus("Оберіть папку для синхронізації:", "text-warning");
-    renderFolderButtons(mode, data.candidates);
-    return;
-  }
-
-  // ❌ Помилка
-  setStatus(`❌ ${data.error || "Помилка синхронізації"}`, "text-danger");
-}
-
-function renderFolderButtons(mode, folders) {
-  chooser.innerHTML = "";
-
-  folders.forEach(f => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn btn-outline-primary btn-sm";
-    btn.textContent = f.name || "Без назви";
-    btn.title = f.webUrl || "";
-
-    btn.onclick = () => {
-      runSync(mode, { target_folder_id: f.id });
-    };
-
-    chooser.appendChild(btn);
-  });
-
-  // кнопка скасування
-  const cancel = document.createElement("button");
-  cancel.type = "button";
-  cancel.className = "btn btn-outline-secondary btn-sm";
-  cancel.textContent = "✖ Скасувати";
-  cancel.onclick = () => {
-    chooser.innerHTML = "";
-    setStatus("Скасовано", "text-muted");
-  };
-  chooser.appendChild(cancel);
-}
-
-// кнопки старту
-document.getElementById("btnSyncPrecalc").onclick = () => runSync("precalc");
-document.getElementById("btnSyncFinal").onclick   = () => runSync("final");
-</script>
-<script>
 document.addEventListener("DOMContentLoaded", () => {
   const toggleBtn     = document.getElementById("toggleSketch");
   const restoreBtn    = document.getElementById("restoreSketch");
@@ -2794,8 +2525,8 @@ if (toggleBtn && restoreBtn && sketchHidePart){
    const btnSyncPrecalc = document.getElementById("btnSyncPrecalc");
   const btnSyncFinal   = document.getElementById("btnSyncFinal");
   const syncStatus     = document.getElementById("syncStatus");
+  const chooser        = document.getElementById("syncFolderChooser");
 
-  // ВАЖЛИВО: додай у urls.py route з name="sync_internal_pdf"
   const syncUrl = "{% url 'sync_internal_pdf' order.id %}";
 
   function getCookie(name) {
@@ -2813,12 +2544,45 @@ if (toggleBtn && restoreBtn && sketchHidePart){
     return cookieValue;
   }
 
-  async function syncInternalPdf(mode) {
+  function setSyncStatus(text, cls = "text-muted") {
+    if (!syncStatus) return;
+    syncStatus.className = "ms-2 " + cls;
+    syncStatus.textContent = text;
+  }
+
+  function renderSyncFolderButtons(mode, folders) {
+    if (!chooser) return;
+
+    chooser.innerHTML = "";
+
+    folders.forEach((f) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-outline-primary btn-sm";
+      btn.textContent = f.name || "Без назви";
+      btn.title = f.webUrl || "";
+      btn.onclick = () => syncInternalPdf(mode, { target_folder_id: f.id });
+      chooser.appendChild(btn);
+    });
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "btn btn-outline-secondary btn-sm";
+    cancel.textContent = "✖ Скасувати";
+    cancel.onclick = () => {
+      chooser.innerHTML = "";
+      setSyncStatus("Скасовано", "text-muted");
+    };
+    chooser.appendChild(cancel);
+  }
+
+  async function syncInternalPdf(mode, extraPayload = {}) {
     const markupVal   = parseFloat(document.getElementById("markup")?.value || 0) || 0;
     const deliveryVal = parseFloat(document.getElementById("deliveryCost")?.value || 0) || 0;
     const packingVal  = parseFloat(document.getElementById("packingCost")?.value  || 0) || 0;
 
-    syncStatus.textContent = "Синхронізація...";
+    if (chooser) chooser.innerHTML = "";
+    setSyncStatus("Синхронізація...", "text-muted");
     const csrftoken = getCookie("csrftoken");
 
     const resp = await fetch(syncUrl, {
@@ -2828,25 +2592,32 @@ if (toggleBtn && restoreBtn && sketchHidePart){
         "X-CSRFToken": csrftoken,
       },
       body: JSON.stringify({
-        mode,                 // "precalc" або "final"
+        mode,
         markup: markupVal,
         delivery: deliveryVal,
         packing: packingVal,
+        ...extraPayload,
       }),
     });
 
     const data = await resp.json();
-    if (!resp.ok || !data.ok) {
-      syncStatus.textContent = data?.error || "Помилка синхронізації";
+
+    if (resp.status === 409 && data.candidates) {
+      setSyncStatus("Оберіть папку для синхронізації", "text-warning");
+      renderSyncFolderButtons(mode, data.candidates);
       return;
     }
 
-    syncStatus.textContent = `Готово ✅ Залито в папок: ${data.uploaded_to}`;
+    if (!resp.ok || !data.ok) {
+      setSyncStatus(data?.error || "Помилка синхронізації", "text-danger");
+      return;
+    }
+
+    setSyncStatus(`Готово ✅ Залито в папок: ${data.uploaded_to}`, "text-success");
   }
 
   if (btnSyncPrecalc) btnSyncPrecalc.addEventListener("click", () => syncInternalPdf("precalc"));
   if (btnSyncFinal)   btnSyncFinal.addEventListener("click", () => syncInternalPdf("final"));
-
   // ---- Галерея + мітки ----
   const mainImage   = document.getElementById("mainImage");
   const markerLayer = document.getElementById("markerLayer");

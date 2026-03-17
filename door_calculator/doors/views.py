@@ -54,8 +54,13 @@ def _debug_post(request, tag: str):
         "bulk_coefficients", "bulk_scope", "bulk_mode",
         "bulk_coeff_ids", "selected_item_ids"
     ) or k.startswith("item_markup_")}
-
-
+def _norm_m365_name(s: str) -> str:
+    s = (s or "").lower()
+    for ch in [" ", ".", ",", "-", "_", "’", "'", '"']:
+        s = s.replace(ch, "")
+    return s
+def _is_m365_folder(it: dict) -> bool:
+    return bool(it and it.get("folder"))
 @login_required
 def delete_order_file(request, file_id):
     of = get_object_or_404(OrderFile, id=file_id)
@@ -183,6 +188,10 @@ def build_pdf_number(order: Order, mode: str, target_folder: dict | None = None)
     base = (order.order_number or "").strip()
     if not base:
         return ""
+
+    # Для переробок не додаємо 2-гу частину
+    if order.work_type == "rework":
+        return base
 
     if mode == "precalc":
         return f"{base}{extract_kp_suffix_from_folder(target_folder)}"
@@ -1354,7 +1363,6 @@ def generate_pdf(request, order_id):
             "ТН%", "Без ТН", "Ціна з ТН", "ТН"
         ]]
 
-        # ✅ Стиль для переносу формули
         formula_style = ParagraphStyle(
             name="FormulaStyle",
             parent=styles["Normal"],
@@ -1370,11 +1378,9 @@ def generate_pdf(request, order_id):
 
         idx = 1
         for it in internal_items:
-            # --- назва + qty з БД ---
             name = safe_text(getattr(it, "name", ""))
             qty_item = to_decimal(getattr(it, "quantity", 1) or 1, "1")
 
-            # --- формула залишаємо для відображення (як і було) ---
             parts = build_item_formula_parts(it)
             formula = safe_text(parts.get("ks_formula", ""))
             formula = (
@@ -1385,17 +1391,13 @@ def generate_pdf(request, order_id):
                 .replace(" / ", " /\u200b")
             )
 
-            # --- К/С з БД (враховує qty, additions, coefficients) ---
             ks_base, coef = it.total_ks()
             ks_eff = _q2(Decimal(str(ks_base)) * Decimal(str(coef)))
 
-            # --- % націнки з БД (позиція або замовлення) ---
             m = _q2(Decimal(str(it.effective_markup_percent() or 0)))
 
-            # --- фінальна ціна з БД (істина) ---
             final_price = _q2(Decimal(str(it.total_cost() or 0)))
 
-            # --- базова ціна без націнки (дістаємо з фінальної) ---
             denom = (Decimal("1") + (m / Decimal("100")))
             base_price = _q2(final_price / denom) if denom != 0 else Decimal("0")
 
@@ -1508,11 +1510,6 @@ def generate_pdf(request, order_id):
         resp["Content-Disposition"] = f'inline; filename="{filename}"'
         return resp
 
-    # =====================================================================
-    # ======================== SIMPLE/DETAILED =============================
-    # =====================================================================
-
-    # ---------- ОСНОВНА ТАБЛИЦЯ (лише для детального) ----------
     if not simple_mode and item_costs:
         main_data = [["№", "Позиція", "Кількість", "Вартість за одиницю, грн", "Сума, грн"]]
 
@@ -1558,7 +1555,6 @@ def generate_pdf(request, order_id):
         main_table.drawOn(p, 40, main_y)
         current_y = main_y - 30
 
-    # ---------- ОКРЕМА ТАБЛИЦЯ ДОДАТКОВИХ ПОСЛУГ ----------
     extras_rows = []
     if delivery > 0:
         extras_rows.append(("Доставка", delivery))
@@ -1588,13 +1584,11 @@ def generate_pdf(request, order_id):
         extras_table.drawOn(p, 40, extras_y)
         current_y = extras_y - 30
 
-    # ---------- ПІДСУМКИ ----------
     y_final = current_y - 10
 
     p.setFont(base_font, 14)
     p.drawString(40, y_final, f"Фінальна сума до оплати: {final_total:.2f} грн")
 
-    # ---------- БЛОК УМОВ ----------
     disclaimer_y = y_final - 35
     text = p.beginText()
     text.setTextOrigin(40, disclaimer_y)
@@ -1612,7 +1606,6 @@ def generate_pdf(request, order_id):
         text.textLine(line)
     p.drawText(text)
 
-    # ---------- завершення ----------
     p.showPage()
     p.save()
     buffer.seek(0)
@@ -2840,7 +2833,49 @@ def resolve_target_folders_for_normal_project(order: Order, mode: str) -> list[d
         return _unique_by_id(result)
 
     return []
+def find_folder_contains_all(children, *needles: str):
+    nn = [_lower(x) for x in needles if x]
+    for it in children or []:
+        if not _is_folder(it):
+            continue
+        name = _lower(it.get("name", ""))
+        if all(n in name for n in nn):
+            return it
+    return None
+def _pick_child_folder_contains(drive_id: str, parent_id: str, needle: str):
+    needle_n = _norm_m365_name(needle)
+    for it in list_children(drive_id, parent_id) or []:
+        if _is_m365_folder(it) and needle_n in _norm_m365_name(it.get("name", "")):
+            return it
+    return None
 
+def resolve_rework_destination_folder(drive_id: str, project_folder_id: str, is_final: bool = False) -> dict:
+    """
+    Для переробок:
+      - precalc -> 2 КП попереднє
+      - final   -> 4 КП в роботу
+
+    Без варіантів і без вибору: шукаємо один конкретний folder.
+    """
+    folder_name = "4 КП в роботу" if is_final else "2 КП попереднє"
+
+    children = list_children(drive_id, project_folder_id) or []
+
+    for it in children:
+        if not _is_m365_folder(it):
+            continue
+
+        name = (it.get("name") or "").strip()
+        if name == folder_name:
+            return it
+
+    child_names = [x.get("name", "") for x in children if _is_m365_folder(x)]
+
+    raise RuntimeError(
+        f"Не знайдено цільову папку для переробки. "
+        f"Очікується: '{folder_name}'. "
+        f"Доступні папки: {child_names}"
+    )
 
 @require_POST
 def sync_internal_pdf(request, order_id):
@@ -2887,7 +2922,6 @@ def sync_internal_pdf(request, order_id):
     delivery = _num(payload.get("delivery", 0), 0)
     packing = _num(payload.get("packing", 0), 0)
 
-    # 1) Розв'язуємо цільові папки
     if order.work_type == "rework":
         is_final = (mode == "final")
         try:
@@ -2921,6 +2955,19 @@ def sync_internal_pdf(request, order_id):
                 return JsonResponse({"ok": False, "error": "target_folder_id is not among candidates"}, status=400)
             target_folders = [by_id[chosen_id]]
 
+    if not target_folders:
+        return JsonResponse({
+            "ok": False,
+            "error": "Не знайдено цільових папок для синхронізації."
+        }, status=404)
+
+    valid_target_folders = [folder for folder in target_folders if folder and folder.get("id")]
+    if not valid_target_folders:
+        return JsonResponse({
+            "ok": False,
+            "error": "Цільові папки знайдені, але не містять коректного folder_id."
+        }, status=400)
+
     def _render_pdf_bytes(get_params: dict) -> bytes:
         old_get = request.GET
         q = QueryDict(mutable=True)
@@ -2947,11 +2994,8 @@ def sync_internal_pdf(request, order_id):
     uploaded_folders = 0
     uploaded_files = []
 
-    for folder in target_folders:
+    for folder in valid_target_folders:
         folder_id = folder.get("id")
-        if not folder_id:
-            continue
-
         pdf_number = build_pdf_number(order, mode, folder)
 
         if order.work_type == "rework":
@@ -2981,7 +3025,7 @@ def sync_internal_pdf(request, order_id):
                 ),
             ]
 
-        folder_uploaded = []
+        uploaded_any_in_folder = False
 
         for label, params, filename in pdfs:
             pdf_bytes = _render_pdf_bytes(params)
@@ -2996,9 +3040,16 @@ def sync_internal_pdf(request, order_id):
                 content_type="application/pdf",
             )
             uploaded_files.append(filename)
-            folder_uploaded.append(filename)
+            uploaded_any_in_folder = True
 
-        uploaded_folders += 1
+        if uploaded_any_in_folder:
+            uploaded_folders += 1
+
+    if uploaded_folders == 0:
+        return JsonResponse({
+            "ok": False,
+            "error": "PDF не було завантажено в жодну папку."
+        }, status=400)
 
     return JsonResponse({
         "ok": True,
@@ -3009,36 +3060,3 @@ def sync_internal_pdf(request, order_id):
     })
 
 
-def find_folder_contains_all(children, *needles: str):
-    nn = [_lower(x) for x in needles if x]
-    for it in children or []:
-        if not _is_folder(it):
-            continue
-        name = _lower(it.get("name", ""))
-        if all(n in name for n in nn):
-            return it
-    return None
-
-
-def resolve_rework_destination_folder(drive_id: str, project_folder_id: str, is_final: bool):
-    """
-    Переробки:
-      - Попереднє -> '2 КП попереднє' (папка в корені проекту)
-      - Фінальне  -> '4 КП → В роботу' (ЦЕ ОДНА ПАПКА у корені проекту)
-    """
-    project_children = list_children(drive_id, project_folder_id)
-
-    if not is_final:
-        f = find_folder_contains_all(project_children, "2", "кп", "поперед")
-        if not f:
-            f = find_folder_contains_all(project_children, "2", "кп")
-        if not f:
-            raise RuntimeError("Rework precalc folder not found: expected '2 КП попереднє' in project root")
-        return f
-
-    f = find_folder_contains_all(project_children, "4", "кп", "в роботу")
-    if not f:
-        f = find_folder_contains_all(project_children, "4", "кп")
-    if not f:
-        raise RuntimeError("Rework final folder not found: expected '4 КП → В роботу' in project root")
-    return f
