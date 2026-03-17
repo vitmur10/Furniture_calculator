@@ -1110,12 +1110,13 @@ def generate_pdf(request, order_id):
       ?internal=1    — внутрішній PDF (ігнорує download)
       ?download=1    — скачати файл (для internal ігнорується)
     """
-    order = Order.objects.get(id=order_id)
-    items = OrderItem.objects.filter(order=order).prefetch_related(
+    order = Order.objects.select_related("customer").get(id=order_id)
+    items_qs = OrderItem.objects.filter(order=order).prefetch_related(
         "coefficients",
         "addition_items__addition",
         "product_items__product",
     )
+    items = list(items_qs)
     company = CompanyInfo.objects.first()
 
     # ---------- helpers ----------
@@ -1154,8 +1155,8 @@ def generate_pdf(request, order_id):
         Повертає КС з об'єкта, якщо є (Order/OrderItem), або 0.
         """
         for attr in (
-                "total_ks", "total_ks_cached", "ks_total", "total_ks_value",
-                "ks_effective", "effective_ks", "ks_value", "ks"
+            "total_ks", "total_ks_cached", "ks_total", "total_ks_value",
+            "ks_effective", "effective_ks", "ks_value", "ks"
         ):
             if hasattr(obj, attr):
                 val = getattr(obj, attr)
@@ -1186,9 +1187,9 @@ def generate_pdf(request, order_id):
         if total_ks is None or total_ks <= 0:
             return None
 
-        hours_total = (total_ks / Decimal("0.75"))
+        hours_total = total_ks / Decimal("0.75")
         hours_per_day_all_workers = Decimal("2") * Decimal("8")
-        days_raw = days_raw = hours_total / hours_per_day_all_workers
+        days_raw = hours_total / hours_per_day_all_workers
         days_with_margin = days_raw * Decimal("1.3")
 
         days_int = int(days_with_margin.to_integral_value(rounding=ROUND_HALF_UP))
@@ -1205,21 +1206,25 @@ def generate_pdf(request, order_id):
     simple_mode = request.GET.get("simple") == "1"
     internal_mode = request.GET.get("internal") == "1"
 
-    # ---------- підрахунок кількості конструкцій ----------
+    # ---------- базові підрахунки за один прохід ----------
     constructions_total = Decimal("0")
-    positions_count = items.count()
-    for it in items:
-        constructions_total += to_decimal(getattr(it, "quantity", 1) or 1, "1")
+    positions_count = len(items)
 
-    # ---------- базова сума (без націнки з GET) ----------
     base_without_markup = Decimal("0")
     item_costs = []  # (it, raw_dec)
 
+    total_ks_sum = Decimal("0")
+
     for it in items:
+        qty = to_decimal(getattr(it, "quantity", 1) or 1, "1")
+        constructions_total += qty
+
         raw = it.total_cost() if callable(getattr(it, "total_cost", None)) else getattr(it, "total_cost", 0)
         raw_dec = to_decimal(raw, "0")
         item_costs.append((it, raw_dec))
         base_without_markup += raw_dec
+
+        total_ks_sum += extract_ks_from_obj(it)
 
     # Націнка для детального/спрощеного:
     # якщо ?markup= передали — застосувати її, інакше множник 1.0
@@ -1235,9 +1240,6 @@ def generate_pdf(request, order_id):
     total_ks = extract_ks_from_obj(order)
 
     if total_ks <= 0:
-        total_ks_sum = Decimal("0")
-        for it in items:
-            total_ks_sum += extract_ks_from_obj(it)
         total_ks = total_ks_sum
 
     # fallback (як у internal)
@@ -1275,6 +1277,28 @@ def generate_pdf(request, order_id):
         fontName=base_font,
         fontSize=9,
         leading=11,
+        alignment=TA_LEFT,
+        wordWrap="CJK",
+    )
+
+    cell_center_style = ParagraphStyle(
+        name="CellCenterStyle",
+        parent=cell_style,
+        alignment=TA_CENTER,
+    )
+
+    cell_right_style = ParagraphStyle(
+        name="CellRightStyle",
+        parent=cell_style,
+        alignment=TA_RIGHT,
+    )
+
+    formula_style = ParagraphStyle(
+        name="FormulaStyle",
+        parent=styles["Normal"],
+        fontName=base_font,
+        fontSize=8,
+        leading=10,
         alignment=TA_LEFT,
         wordWrap="CJK",
     )
@@ -1336,18 +1360,10 @@ def generate_pdf(request, order_id):
     current_y = title_y - 115
 
     # =====================================================================
-    # ======================== INTERNAL MODE ==============================
+    # ======================== INTERNAL MODE ===============================
     # =====================================================================
     if internal_mode:
-        internal_items = (
-            order.items.all().prefetch_related(
-                "coefficients",
-                "addition_items__addition",
-                "product_items__product",
-            )
-            if hasattr(order, "items")
-            else items
-        )
+        internal_items = items
 
         rate_obj = Rate.objects.first()
         current_rate = Decimal(str(rate_obj.price_per_ks)) if rate_obj else Decimal("0")
@@ -1359,22 +1375,22 @@ def generate_pdf(request, order_id):
         rate = Decimal(str(getattr(order, "price_per_ks", None) or current_rate))
 
         data = [[
-            "№", "Позиція", "Qty", "Формула", "К/С",
-            "ТН%", "Без ТН", "Ціна з ТН", "ТН"
+            Paragraph("№", cell_center_style),
+            Paragraph("Позиція", cell_center_style),
+            Paragraph("Qty", cell_center_style),
+            Paragraph("Формула", cell_center_style),
+            Paragraph("К/С", cell_center_style),
+            Paragraph("ТН%", cell_center_style),
+            Paragraph("Без ТН", cell_center_style),
+            Paragraph("Ціна з ТН", cell_center_style),
+            Paragraph("ТН", cell_center_style),
         ]]
-
-        formula_style = ParagraphStyle(
-            name="FormulaStyle",
-            parent=styles["Normal"],
-            fontName=base_font,
-            fontSize=8,
-            leading=10,
-            alignment=TA_LEFT,
-            wordWrap="CJK",
-        )
 
         effective_ks_sum = Decimal("0")
         total_sum = Decimal("0")
+        total_qty_sum = Decimal("0")
+        total_base_sum = Decimal("0")
+        total_markup_sum = Decimal("0")
 
         idx = 1
         for it in internal_items:
@@ -1395,27 +1411,44 @@ def generate_pdf(request, order_id):
             ks_eff = _q2(Decimal(str(ks_base)) * Decimal(str(coef)))
 
             m = _q2(Decimal(str(it.effective_markup_percent() or 0)))
-
             final_price = _q2(Decimal(str(it.total_cost() or 0)))
 
-            denom = (Decimal("1") + (m / Decimal("100")))
+            denom = Decimal("1") + (m / Decimal("100"))
             base_price = _q2(final_price / denom) if denom != 0 else Decimal("0")
 
             effective_ks_sum += ks_eff
             total_sum += final_price
+            total_qty_sum += qty_item
+            total_base_sum += base_price
+            total_markup_sum += (final_price - base_price)
+
             mark_up = final_price - base_price
+
             data.append([
-                str(idx),
+                Paragraph(str(idx), cell_center_style),
                 Paragraph(name, cell_style),
-                fmt_qty(qty_item),
+                Paragraph(fmt_qty(qty_item), cell_center_style),
                 Paragraph(formula, formula_style),
-                f"{ks_eff:.2f}",
-                f"{m:.2f}",
-                f"{base_price:.2f}",
-                f"{final_price:.2f}",
-                f"{mark_up}"
+                Paragraph(f"{ks_eff:.2f}", cell_center_style),
+                Paragraph(f"{m:.2f}", cell_right_style),
+                Paragraph(f"{base_price:.2f}", cell_right_style),
+                Paragraph(f"{final_price:.2f}", cell_right_style),
+                Paragraph(f"{mark_up:.2f}", cell_right_style),
             ])
             idx += 1
+
+        # Рядок "Разом" тільки для внутрішньої КП
+        data.append([
+            Paragraph("", cell_center_style),
+            Paragraph("Разом", cell_style),
+            Paragraph(fmt_qty(total_qty_sum), cell_center_style),
+            Paragraph("", formula_style),
+            Paragraph(f"{_q2(effective_ks_sum):.2f}", cell_center_style),
+            Paragraph("", cell_right_style),
+            Paragraph(f"{_q2(total_base_sum):.2f}", cell_right_style),
+            Paragraph(f"{_q2(total_sum):.2f}", cell_right_style),
+            Paragraph(f"{_q2(total_markup_sum):.2f}", cell_right_style),
+        ])
 
         col_widths = [20, 80, 35, 140, 35, 30, 70, 70, 70]
         tbl = Table(data, colWidths=col_widths)
@@ -1426,14 +1459,11 @@ def generate_pdf(request, order_id):
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0d6efd")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-            ("ALIGN", (0, 1), (0, -1), "CENTER"),
-            ("ALIGN", (2, 1), (4, -1), "CENTER"),
-            ("ALIGN", (5, 1), (8, -1), "RIGHT"),
-            ("ALIGN", (1, 1), (1, -1), "LEFT"),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEADING", (0, 0), (-1, -1), 10),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f2f2f2")),
         ]))
 
         _, h = tbl.wrap(0, 0)
@@ -1511,10 +1541,13 @@ def generate_pdf(request, order_id):
         return resp
 
     if not simple_mode and item_costs:
-        main_data = [["№", "Позиція", "Кількість", "Вартість за одиницю, грн", "Сума, грн"]]
-
-        total_qty_sum = Decimal("0")
-        total_sum_all = Decimal("0")
+        main_data = [[
+            Paragraph("№", cell_center_style),
+            Paragraph("Позиція", cell_center_style),
+            Paragraph("Кількість", cell_center_style),
+            Paragraph("Вартість за одиницю, грн", cell_center_style),
+            Paragraph("Сума, грн", cell_center_style),
+        ]]
 
         for idx, (it, raw_dec) in enumerate(item_costs, start=1):
             total_with_markup = (raw_dec * markup_factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -1525,24 +1558,13 @@ def generate_pdf(request, order_id):
                 else Decimal("0.00")
             )
 
-            total_qty_sum += qty
-            total_sum_all += total_with_markup
-
             main_data.append([
-                str(idx),
+                Paragraph(str(idx), cell_center_style),
                 Paragraph(safe_text(getattr(it, "name", "")), cell_style),
-                fmt_qty(qty),
-                f"{unit_cost:.2f}",
-                f"{total_with_markup:.2f}"
+                Paragraph(fmt_qty(qty), cell_center_style),
+                Paragraph(f"{unit_cost:.2f}", cell_right_style),
+                Paragraph(f"{total_with_markup:.2f}", cell_right_style),
             ])
-
-        main_data.append([
-            "",
-            Paragraph("Разом", cell_style),
-            fmt_qty(total_qty_sum),
-            "",
-            f"{total_sum_all:.2f}"
-        ])
 
         main_table = Table(main_data, colWidths=[30, 250, 60, 110, 90])
         main_table.setStyle(TableStyle([
@@ -1551,15 +1573,11 @@ def generate_pdf(request, order_id):
             ("FONTSIZE", (0, 0), (-1, -1), 10),
             ("BACKGROUND", (0, 0), (-1, 0), colors.white),
             ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
-            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-            ("ALIGN", (0, 1), (0, -1), "CENTER"),
-            ("ALIGN", (2, 1), (-1, -1), "CENTER"),
-            ("ALIGN", (1, 1), (1, -1), "LEFT"),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (1, 1), (1, -1), 6),
-            ("RIGHTPADDING", (1, 1), (1, -1), 6),
             ("TOPPADDING", (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (1, 1), (1, -1), 6),
+            ("RIGHTPADDING", (1, 1), (1, -1), 6),
         ]))
 
         _, main_h = main_table.wrap(0, 0)
@@ -1576,19 +1594,33 @@ def generate_pdf(request, order_id):
         extras_rows.append(("Пакування", packing))
 
     if extras_rows:
-        extras_data = [["№", "Додаткові послуги", "Кількість", "Вартість за одиницю, грн", "Сума, грн"]]
+        extras_data = [[
+            Paragraph("№", cell_center_style),
+            Paragraph("Додаткові послуги", cell_center_style),
+            Paragraph("Кількість", cell_center_style),
+            Paragraph("Вартість за одиницю, грн", cell_center_style),
+            Paragraph("Сума, грн", cell_center_style),
+        ]]
         for idx, (name, value) in enumerate(extras_rows, start=1):
             val_str = f"{_q2(value):.2f}"
-            extras_data.append([idx, name, "1", val_str, val_str])
+            extras_data.append([
+                Paragraph(str(idx), cell_center_style),
+                Paragraph(name, cell_style),
+                Paragraph("1", cell_center_style),
+                Paragraph(val_str, cell_right_style),
+                Paragraph(val_str, cell_right_style),
+            ])
 
         extras_table = Table(extras_data, colWidths=[30, 230, 70, 130, 80])
         extras_table.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
             ("FONTNAME", (0, 0), (-1, -1), base_font),
             ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("BACKGROUND", (0, 0), (-1, 0), colors.white),
             ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
 
         _, extras_h = extras_table.wrap(0, 0)
