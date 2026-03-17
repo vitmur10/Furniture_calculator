@@ -1935,11 +1935,7 @@ body.preview-only #sketchHidePart{
       <!-- загальні -->
       {% for row in addons_by_category %}
         {% with cat=row.cat cat_adds=row.addons %}
-          {% if cat.name|lower != 'двері'
-             and cat.name|lower != 'ворота'
-             and cat.name|lower != 'вікно'
-             and cat.name|lower != 'паралельно-зсувна'
-             and cat.name|lower != 'петлі' %}
+          {% if cat.name|lower != 'двері' and cat.name|lower != 'ворота' and cat.name|lower != 'вікно' and cat.name|lower != 'паралельно-зсувна' and cat.name|lower != 'петлі' %}
             <div class="category-card border rounded p-3 mb-3">
               <div class="category-header" data-target="add-body-{{ cat.id }}">
                 <h6 class="fw-bold mb-0">🧩 {{ cat.name }}</h6>
