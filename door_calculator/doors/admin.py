@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Product, Addition, Coefficient, Rate, Order, OrderItem, AdditionItem, Worker, WorkLog, OrderProgress, Category, CompanyInfo
+from .models import Product, Addition, Coefficient, Rate, Order, OrderItem, AdditionItem, Worker, WorkLog, OrderProgress, Category, CompanyInfo,Customer
 # Register your models here.
 
 admin.site.register(Product)
@@ -12,6 +12,7 @@ admin.site.register(Worker)
 admin.site.register(WorkLog)
 admin.site.register(OrderProgress)
 admin.site.register(Category)
+admin.site.register(Customer)
 
 
 @admin.register(Order)
