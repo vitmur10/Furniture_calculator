@@ -2306,6 +2306,11 @@ body.preview-only #sketchHidePart{
                   <!-- Ціна -->
                   <td class="fw-bold text-success">
                     {{ i.total_cost_value|floatformat:2 }} грн
+                    {% if i.workshop_cost_value != i.total_cost_value %}
+                    <div class="small text-info" title="Вартість без торгової націнки (для цеху)">
+                      🏭 цех: {{ i.workshop_cost_value|floatformat:2 }} грн
+                    </div>
+                    {% endif %}
                   </td>
 
                   <!-- Дія -->
@@ -2433,6 +2438,25 @@ body.preview-only #sketchHidePart{
             <h4 class="text-success fw-bold mb-3">
                 💰 Загальна вартість: {{ total|floatformat:2 }} грн
             </h4>
+
+            <!-- Розбивка: робота цеху vs торгова націнка -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="p-2 bg-info bg-opacity-10 rounded border border-info text-center">
+                        <div class="text-info fw-bold small">🏭 Робота цеху (з коефіцієнтами)</div>
+                        <div class="fs-5 fw-bold">{{ workshop_total|floatformat:2 }} грн</div>
+                        <div class="text-muted small">Враховано: теплий профіль, великий розмір тощо</div>
+                        <div class="text-muted small">Торгова націнка <strong>не включена</strong></div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="p-2 bg-warning bg-opacity-10 rounded border border-warning text-center">
+                        <div class="text-warning fw-bold small">📈 Торгова націнка</div>
+                        <div class="fs-5 fw-bold">{{ markup_total|floatformat:2 }} грн</div>
+                        <div class="text-muted small">Не впливає на трудомісткість цеху</div>
+                    </div>
+                </div>
+            </div>
 
             <hr>
 

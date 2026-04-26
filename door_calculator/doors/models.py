@@ -432,6 +432,23 @@ class OrderItem(models.Model):
 
         return base_price * (Decimal("1") + (Decimal(str(markup)) / Decimal("100")))
 
+    def workshop_cost(self):
+        """
+        Вартість роботи цеху — ТІЛЬКИ коефіцієнти (теплий профіль, великий розмір тощо),
+        БЕЗ торгової націнки (markup_percent).
+
+        Логіка:
+          workshop_cost = ks_effective × rate
+          де ks_effective = (products_ks + adds_ks) × qty × коефіцієнти
+
+        Торгова націнка не впливає на трудомісткість, тому не включається.
+        """
+        ks_base, coef = self.total_ks()
+        ks_effective = ks_base * coef
+
+        rate = Decimal(str(self.order.price_per_ks or 0))
+        return ks_effective * rate
+
     def __str__(self):
         return self.name or f"Позиція {self.id}"
 

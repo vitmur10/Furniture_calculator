@@ -1,6 +1,7 @@
 import os
 import time
-from typing import Iterable, List, Dict
+import concurrent.futures
+from typing import Iterable, List, Dict, Set
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -221,6 +222,9 @@ class Command(BaseCommand):
         created_files = 0
         created_images = 0
 
+        # Паралельна обробка папок (обмежуємо пул, щоб не перевантажити Graph API)
+        max_workers = getattr(settings, "M365_SYNC_WORKERS", 4)
+
         for site_name in site_names:
 
             site = find_site_by_display_name(site_name)
@@ -236,26 +240,38 @@ class Command(BaseCommand):
             root_items = list_root_children(drive_id) or []
             project_folders = [it for it in root_items if _is_folder(it)]
 
-            current_root_ids = {it["id"] for it in project_folders}
+            # ВИПРАВЛЕННЯ БАГ #2: current_root_ids тепер локальна для кожного сайту
+            current_root_ids: Set[str] = {it["id"] for it in project_folders}
 
-            for folder in project_folders:
-
+            def process_folder(folder):
+                """Обробляє одну папку, повертає (orders_c, files_c, images_c)."""
                 folder_id = folder["id"]
                 folder_name = folder.get("name", "")
                 folder_url = folder.get("webUrl", "")
 
+                # ВИПРАВЛЕННЯ БАГ #1: resolve_leaf_folders для всіх ланцюгів паралельно
                 chain_leafs = {}
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as leaf_pool:
+                    def resolve_chain(item):
+                        chain_name, chain = item
+                        leafs = resolve_leaf_folders_by_chain(drive_id, folder_id, chain)
+                        return chain_name, leafs
 
-                for chain_name, chain in chains.items():
-                    leafs = resolve_leaf_folders_by_chain(drive_id, folder_id, chain)
-                    if leafs:
-                        chain_leafs[chain_name] = leafs
+                    futures = {leaf_pool.submit(resolve_chain, item): item for item in chains.items()}
+                    for future in concurrent.futures.as_completed(futures):
+                        try:
+                            chain_name, leafs = future.result()
+                            if leafs:
+                                chain_leafs[chain_name] = leafs
+                        except Exception as e:
+                            self.stderr.write(f"Chain resolve error: {e}")
 
                 if not chain_leafs:
-                    continue
+                    return 0, 0, 0
+
+                ord_c = fil_c = img_c = 0
 
                 with transaction.atomic():
-
                     order = Order.objects.filter(
                         source="m365",
                         remote_folder_id=folder_id,
@@ -292,25 +308,19 @@ class Command(BaseCommand):
                             remote_folder_id=folder_id,
                             remote_web_url=folder_url,
                         )
-
-                        created_orders += 1
+                        ord_c += 1
 
                     for leafs in chain_leafs.values():
-
                         for leaf in leafs:
-
                             for it in iter_files_direct(drive_id, leaf["id"]):
-
                                 file_id = it["id"]
                                 name = it.get("name", "")
                                 web = it.get("webUrl", "")
 
                                 if _is_image(name):
-
                                     if not OrderImage.objects.filter(
                                         remote_item_id=file_id
                                     ).exists():
-
                                         OrderImage.objects.create(
                                             order=order,
                                             remote_site_id=site["id"],
@@ -319,18 +329,13 @@ class Command(BaseCommand):
                                             remote_web_url=web,
                                             remote_name=name,
                                         )
-
-                                        created_images += 1
-
+                                        img_c += 1
                                 else:
-
                                     if _is_our_pdf(name):
                                         continue
-
                                     if not OrderFile.objects.filter(
                                         remote_item_id=file_id
                                     ).exists():
-
                                         OrderFile.objects.create(
                                             order=order,
                                             source="m365",
@@ -340,9 +345,26 @@ class Command(BaseCommand):
                                             remote_web_url=web,
                                             remote_name=name,
                                         )
+                                        fil_c += 1
 
-                                        created_files += 1
+                return ord_c, fil_c, img_c
 
+            # ВИПРАВЛЕННЯ БАГ #1: обробляємо папки паралельно у пулі потоків
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(process_folder, folder): folder for folder in project_folders}
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        ord_c, fil_c, img_c = future.result()
+                        created_orders += ord_c
+                        created_files += fil_c
+                        created_images += img_c
+                    except Exception as e:
+                        folder = futures[future]
+                        self.stderr.write(
+                            self.style.ERROR(f"Error processing folder '{folder.get('name')}': {e}")
+                        )
+
+            # ВИПРАВЛЕННЯ БАГ #2: видалення прив'язане до конкретного сайту + диску
             stale_orders = Order.objects.filter(
                 source="m365",
                 remote_site_id=site["id"],

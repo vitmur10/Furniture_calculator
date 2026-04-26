@@ -775,6 +775,7 @@ def calculate_order(request, order_id):
         base_price = _q2(ks_effective * price_per_ks)
         final_price = _q2(base_price * (Decimal("1") + (m / Decimal("100"))))
 
+        it.workshop_cost_value = base_price       # вартість роботи цеху (без торгової націнки)
         it.total_cost_value = final_price
         total_sum += final_price
 
@@ -815,6 +816,12 @@ def calculate_order(request, order_id):
     effective_ks = _q2(effective_ks)
     total_sum = _q2(total_sum)
     formula_expression = " + ".join(formula_terms) if formula_terms else "0.00"
+
+    # Підсумок роботи цеху (без торгової націнки) — сума base_price по всіх позиціях
+    workshop_total = _q2(sum(
+        getattr(it, "workshop_cost_value", Decimal("0")) for it in items
+    ))
+    markup_total = _q2(total_sum - workshop_total)
 
     global_coeffs = Coefficient.objects.filter(applies_globally=True).order_by("name")
     category_coeffs = Coefficient.objects.filter(applies_globally=False).order_by("name")
@@ -863,6 +870,8 @@ def calculate_order(request, order_id):
         "children_map": children_map,
         "parents_with_children": parents_with_children,
         "total": total_sum,
+        "workshop_total": workshop_total,
+        "markup_total": markup_total,
         "customers": customers,
         "markers_by_image": markers_by_image,
         "effective_ks": effective_ks,
