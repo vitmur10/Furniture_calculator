@@ -819,7 +819,8 @@ def calculate_order(request, order_id):
 
     # Підсумок роботи цеху (без торгової націнки) — сума base_price по всіх позиціях
     workshop_total = _q2(sum(
-        getattr(it, "workshop_cost_value", Decimal("0")) for it in items
+        (getattr(it, "workshop_cost_value", Decimal("0")) for it in items),
+        Decimal("0")
     ))
     markup_total = _q2(total_sum - workshop_total)
 
@@ -3112,5 +3113,3 @@ def sync_internal_pdf(request, order_id):
         "uploaded_to": uploaded_folders,
         "files": uploaded_files,
     })
-
-
