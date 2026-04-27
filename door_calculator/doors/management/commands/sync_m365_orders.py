@@ -245,13 +245,12 @@ class Command(BaseCommand):
             # ВИПРАВЛЕННЯ БАГ #2: current_root_ids тепер локальна для кожного сайту
             current_root_ids: Set[str] = {it["id"] for it in project_folders}
 
-            def process_folder(folder):
-                """Обробляє одну папку, повертає (orders_c, files_c, images_c)."""
+            def fetch_folder_data(folder):
+                """Тільки запити до Graph API — без запису в БД."""
                 folder_id = folder["id"]
                 folder_name = folder.get("name", "")
                 folder_url = folder.get("webUrl", "")
 
-                # ВИПРАВЛЕННЯ БАГ #1: resolve_leaf_folders для всіх ланцюгів паралельно
                 chain_leafs = {}
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as leaf_pool:
                     def resolve_chain(item):
@@ -259,8 +258,8 @@ class Command(BaseCommand):
                         leafs = resolve_leaf_folders_by_chain(drive_id, folder_id, chain)
                         return chain_name, leafs
 
-                    futures = {leaf_pool.submit(resolve_chain, item): item for item in chains.items()}
-                    for future in concurrent.futures.as_completed(futures):
+                    futures_inner = {leaf_pool.submit(resolve_chain, item): item for item in chains.items()}
+                    for future in concurrent.futures.as_completed(futures_inner):
                         try:
                             chain_name, leafs = future.result()
                             if leafs:
@@ -268,124 +267,141 @@ class Command(BaseCommand):
                         except Exception as e:
                             self.stderr.write(f"Chain resolve error: {e}")
 
-                if not chain_leafs:
-                    return 0, 0, 0
+                # Збираємо всі файли з Teams
+                seen_file_ids: Set[str] = set()
+                seen_image_ids: Set[str] = set()
+                new_files = []
+                new_images = []
 
-                ord_c = fil_c = img_c = 0
+                for leafs in chain_leafs.values():
+                    for leaf in leafs:
+                        for it in iter_files_direct(drive_id, leaf["id"]):
+                            file_id = it["id"]
+                            name = it.get("name", "")
+                            web = it.get("webUrl", "")
 
-                with transaction.atomic():
-                    order = Order.objects.filter(
-                        source="m365",
-                        remote_folder_id=folder_id,
-                    ).first()
+                            if _is_image(name):
+                                seen_image_ids.add(file_id)
+                                new_images.append({"id": file_id, "name": name, "web": web})
+                            else:
+                                if _is_our_pdf(name):
+                                    continue
+                                seen_file_ids.add(file_id)
+                                new_files.append({"id": file_id, "name": name, "web": web})
 
-                    expected_work_type = get_work_type(site_name)
+                return {
+                    "folder": folder,
+                    "folder_name": folder_name,
+                    "folder_url": folder_url,
+                    "has_data": bool(chain_leafs),
+                    "seen_file_ids": seen_file_ids,
+                    "seen_image_ids": seen_image_ids,
+                    "new_files": new_files,
+                    "new_images": new_images,
+                }
 
-                    if order:
-                        changed = False
-
-                        if order.work_type != expected_work_type:
-                            order.work_type = expected_work_type
-                            changed = True
-
-                        if order.order_name != folder_name:
-                            order.order_name = folder_name
-                            changed = True
-
-                        if order.remote_web_url != folder_url:
-                            order.remote_web_url = folder_url
-                            changed = True
-
-                        if changed:
-                            order.save(update_fields=["work_type", "order_name", "remote_web_url"])
-
-                    if not order:
-                        order = Order.objects.create(
-                            order_name=folder_name,
-                            order_number=make_unique_order_number(folder, site_name),
-                            work_type=expected_work_type,
-                            source="m365",
-                            remote_site_id=site["id"],
-                            remote_drive_id=drive_id,
-                            remote_folder_id=folder_id,
-                            remote_web_url=folder_url,
-                        )
-                        ord_c += 1
-
-                    # Збираємо всі актуальні file_id з Teams для цього замовлення
-                    seen_file_ids: Set[str] = set()
-                    seen_image_ids: Set[str] = set()
-
-                    for leafs in chain_leafs.values():
-                        for leaf in leafs:
-                            for it in iter_files_direct(drive_id, leaf["id"]):
-                                file_id = it["id"]
-                                name = it.get("name", "")
-                                web = it.get("webUrl", "")
-
-                                if _is_image(name):
-                                    seen_image_ids.add(file_id)
-                                    if not OrderImage.objects.filter(
-                                        remote_item_id=file_id
-                                    ).exists():
-                                        OrderImage.objects.create(
-                                            order=order,
-                                            remote_site_id=site["id"],
-                                            remote_drive_id=drive_id,
-                                            remote_item_id=file_id,
-                                            remote_web_url=web,
-                                            remote_name=name,
-                                        )
-                                        img_c += 1
-                                else:
-                                    if _is_our_pdf(name):
-                                        continue
-                                    seen_file_ids.add(file_id)
-                                    if not OrderFile.objects.filter(
-                                        remote_item_id=file_id
-                                    ).exists():
-                                        OrderFile.objects.create(
-                                            order=order,
-                                            source="m365",
-                                            remote_site_id=site["id"],
-                                            remote_drive_id=drive_id,
-                                            remote_item_id=file_id,
-                                            remote_web_url=web,
-                                            remote_name=name,
-                                        )
-                                        fil_c += 1
-
-                    # Видаляємо файли/зображення яких більше немає в Teams
-                    stale_files = OrderFile.objects.filter(
-                        order=order, source="m365"
-                    ).exclude(remote_item_id__in=seen_file_ids)
-                    fil_deleted = stale_files.count()
-                    stale_files.delete()
-
-                    stale_images = OrderImage.objects.filter(
-                        order=order
-                    ).exclude(remote_item_id__in=seen_image_ids)
-                    img_deleted = stale_images.count()
-                    stale_images.delete()
-
-                return ord_c, fil_c, img_c, fil_deleted, img_deleted
-
-            # ВИПРАВЛЕННЯ БАГ #1: обробляємо папки паралельно у пулі потоків
+            # КРОК 1: паралельно збираємо дані з Graph API (без запису в БД)
+            folder_data_list = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(process_folder, folder): folder for folder in project_folders}
+                futures = {pool.submit(fetch_folder_data, folder): folder for folder in project_folders}
                 for future in concurrent.futures.as_completed(futures):
                     try:
-                        ord_c, fil_c, img_c, fil_del, img_del = future.result()
-                        created_orders += ord_c
-                        created_files += fil_c
-                        created_images += img_c
-                        deleted_files += fil_del
-                        deleted_images += img_del
+                        folder_data_list.append(future.result())
                     except Exception as e:
                         folder = futures[future]
                         self.stderr.write(
-                            self.style.ERROR(f"Error processing folder '{folder.get('name')}': {e}")
+                            self.style.ERROR(f"Error fetching folder '{folder.get('name')}': {e}")
                         )
+
+            # КРОК 2: послідовно пишемо в БД (уникаємо database is locked)
+            for data in folder_data_list:
+                if not data["has_data"]:
+                    continue
+
+                folder = data["folder"]
+                folder_id = folder["id"]
+                folder_name = data["folder_name"]
+                folder_url = data["folder_url"]
+
+                try:
+                    with transaction.atomic():
+                        order = Order.objects.filter(
+                            source="m365",
+                            remote_folder_id=folder_id,
+                        ).first()
+
+                        expected_work_type = get_work_type(site_name)
+
+                        if order:
+                            changed = False
+                            if order.work_type != expected_work_type:
+                                order.work_type = expected_work_type
+                                changed = True
+                            if order.order_name != folder_name:
+                                order.order_name = folder_name
+                                changed = True
+                            if order.remote_web_url != folder_url:
+                                order.remote_web_url = folder_url
+                                changed = True
+                            if changed:
+                                order.save(update_fields=["work_type", "order_name", "remote_web_url"])
+                        else:
+                            order = Order.objects.create(
+                                order_name=folder_name,
+                                order_number=make_unique_order_number(folder, site_name),
+                                work_type=expected_work_type,
+                                source="m365",
+                                remote_site_id=site["id"],
+                                remote_drive_id=drive_id,
+                                remote_folder_id=folder_id,
+                                remote_web_url=folder_url,
+                            )
+                            created_orders += 1
+
+                        # Додаємо нові зображення
+                        for img in data["new_images"]:
+                            if not OrderImage.objects.filter(remote_item_id=img["id"]).exists():
+                                OrderImage.objects.create(
+                                    order=order,
+                                    remote_site_id=site["id"],
+                                    remote_drive_id=drive_id,
+                                    remote_item_id=img["id"],
+                                    remote_web_url=img["web"],
+                                    remote_name=img["name"],
+                                )
+                                created_images += 1
+
+                        # Додаємо нові файли
+                        for f in data["new_files"]:
+                            if not OrderFile.objects.filter(remote_item_id=f["id"]).exists():
+                                OrderFile.objects.create(
+                                    order=order,
+                                    source="m365",
+                                    remote_site_id=site["id"],
+                                    remote_drive_id=drive_id,
+                                    remote_item_id=f["id"],
+                                    remote_web_url=f["web"],
+                                    remote_name=f["name"],
+                                )
+                                created_files += 1
+
+                        # Видаляємо файли/зображення яких більше немає в Teams
+                        stale_files = OrderFile.objects.filter(
+                            order=order, source="m365"
+                        ).exclude(remote_item_id__in=data["seen_file_ids"])
+                        deleted_files += stale_files.count()
+                        stale_files.delete()
+
+                        stale_images = OrderImage.objects.filter(
+                            order=order
+                        ).exclude(remote_item_id__in=data["seen_image_ids"])
+                        deleted_images += stale_images.count()
+                        stale_images.delete()
+
+                except Exception as e:
+                    self.stderr.write(
+                        self.style.ERROR(f"Error saving folder '{folder_name}': {e}")
+                    )
 
             # ВИПРАВЛЕННЯ БАГ #2: видалення прив'язане до конкретного сайту + диску
             stale_orders = Order.objects.filter(
