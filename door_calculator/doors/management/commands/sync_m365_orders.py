@@ -301,12 +301,18 @@ class Command(BaseCommand):
                 }
 
             # КРОК 1: паралельно збираємо дані з Graph API (без запису в БД)
+            # timeout=30 на future щоб завислі запити не блокували весь цикл
             folder_data_list = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {pool.submit(fetch_folder_data, folder): folder for folder in project_folders}
-                for future in concurrent.futures.as_completed(futures):
+                for future in concurrent.futures.as_completed(futures, timeout=120):
                     try:
-                        folder_data_list.append(future.result())
+                        folder_data_list.append(future.result(timeout=30))
+                    except concurrent.futures.TimeoutError:
+                        folder = futures[future]
+                        self.stderr.write(
+                            self.style.WARNING(f"Timeout fetching folder '{folder.get('name')}', skipping")
+                        )
                     except Exception as e:
                         folder = futures[future]
                         self.stderr.write(

@@ -35,7 +35,7 @@ def get_app_token() -> str:
 
 RETRY_STATUS = {429, 503, 504}
 
-def graph(method: str, url_or_path: str, *, token: str = None, headers=None, params=None, data=None, json=None, timeout=60):
+def graph(method: str, url_or_path: str, *, token: str = None, headers=None, params=None, data=None, json=None, timeout=20):
     url = url_or_path if url_or_path.startswith("http") else (GRAPH_BASE + url_or_path)
 
     if token is None:
