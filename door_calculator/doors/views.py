@@ -112,8 +112,10 @@ def _recalc_order_totals(order: Order):
     total_ks_all = Decimal("0")
     total_cost_all = Decimal("0")
     for i in order.items.all():
-        ks, _ = i.total_ks()
-        total_ks_all += Decimal(str(ks))
+        ks_base, coef = i.total_ks()
+        # ВИПРАВЛЕННЯ: множимо на коефіцієнт (теплий профіль, великий розмір тощо)
+        ks_effective = Decimal(str(ks_base)) * Decimal(str(coef))
+        total_ks_all += ks_effective
         total_cost_all += Decimal(str(i.total_cost()))
     order.total_ks = total_ks_all
     order.total_cost = total_cost_all
