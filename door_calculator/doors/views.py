@@ -3115,3 +3115,5 @@ def sync_internal_pdf(request, order_id):
         "uploaded_to": uploaded_folders,
         "files": uploaded_files,
     })
+
+
