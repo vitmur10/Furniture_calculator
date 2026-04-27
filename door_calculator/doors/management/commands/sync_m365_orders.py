@@ -219,6 +219,8 @@ class Command(BaseCommand):
 
         created_orders = 0
         deleted_orders = 0
+        deleted_files = 0
+        deleted_images = 0
         created_files = 0
         created_images = 0
 
@@ -310,6 +312,10 @@ class Command(BaseCommand):
                         )
                         ord_c += 1
 
+                    # Збираємо всі актуальні file_id з Teams для цього замовлення
+                    seen_file_ids: Set[str] = set()
+                    seen_image_ids: Set[str] = set()
+
                     for leafs in chain_leafs.values():
                         for leaf in leafs:
                             for it in iter_files_direct(drive_id, leaf["id"]):
@@ -318,6 +324,7 @@ class Command(BaseCommand):
                                 web = it.get("webUrl", "")
 
                                 if _is_image(name):
+                                    seen_image_ids.add(file_id)
                                     if not OrderImage.objects.filter(
                                         remote_item_id=file_id
                                     ).exists():
@@ -333,6 +340,7 @@ class Command(BaseCommand):
                                 else:
                                     if _is_our_pdf(name):
                                         continue
+                                    seen_file_ids.add(file_id)
                                     if not OrderFile.objects.filter(
                                         remote_item_id=file_id
                                     ).exists():
@@ -347,17 +355,32 @@ class Command(BaseCommand):
                                         )
                                         fil_c += 1
 
-                return ord_c, fil_c, img_c
+                    # Видаляємо файли/зображення яких більше немає в Teams
+                    stale_files = OrderFile.objects.filter(
+                        order=order, source="m365"
+                    ).exclude(remote_item_id__in=seen_file_ids)
+                    fil_deleted = stale_files.count()
+                    stale_files.delete()
+
+                    stale_images = OrderImage.objects.filter(
+                        order=order
+                    ).exclude(remote_item_id__in=seen_image_ids)
+                    img_deleted = stale_images.count()
+                    stale_images.delete()
+
+                return ord_c, fil_c, img_c, fil_deleted, img_deleted
 
             # ВИПРАВЛЕННЯ БАГ #1: обробляємо папки паралельно у пулі потоків
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {pool.submit(process_folder, folder): folder for folder in project_folders}
                 for future in concurrent.futures.as_completed(futures):
                     try:
-                        ord_c, fil_c, img_c = future.result()
+                        ord_c, fil_c, img_c, fil_del, img_del = future.result()
                         created_orders += ord_c
                         created_files += fil_c
                         created_images += img_c
+                        deleted_files += fil_del
+                        deleted_images += img_del
                     except Exception as e:
                         folder = futures[future]
                         self.stderr.write(
@@ -382,7 +405,9 @@ class Command(BaseCommand):
             f"created_orders={created_orders}, "
             f"created_files={created_files}, "
             f"created_images={created_images}, "
-            f"deleted_orders={deleted_orders}"
+            f"deleted_orders={deleted_orders}, "
+            f"deleted_files={deleted_files}, "
+            f"deleted_images={deleted_images}"
         ))
 
     def handle(self, *args, **options):
