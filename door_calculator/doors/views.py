@@ -2855,9 +2855,9 @@ def resolve_target_folders_for_normal_project(order: Order, mode: str) -> list[d
             f_calc = _find_child_folder_by_contains(drive_id, cp["id"], "1 Розрахунок матеріалів")
             if not f_calc:
                 continue
-            # знайти ВСІ "Для КС" всередині f_calc
-            found = search_in_folder(drive_id, f_calc["id"], "Для КС")
-            result.extend([x for x in found if _is_folder(x) and "для кс" in _lower(x.get("name", ""))])
+            # знайти ВСІ "Для КС" всередині f_calc через list_children (без пошуку)
+            children = list_children(drive_id, f_calc["id"]) or []
+            result.extend([x for x in children if _is_folder(x) and "для кс" in _lower(x.get("name", ""))])
         return _unique_by_id(result)
 
     if mode == "final":
@@ -2871,19 +2871,15 @@ def resolve_target_folders_for_normal_project(order: Order, mode: str) -> list[d
         if not f_in_work:
             return []
 
-        # Проект (може бути декілька)
-        projects = search_in_folder(drive_id, f_in_work["id"], "Проект")
-        project_folders = [
-            x for x in projects
-            if _is_folder(x) and "проект" in _lower(x.get("name", ""))
-        ]
+        # Всі підпапки в "2 В роботу" (Проект 1, Проект 2, ...)
+        project_folders = [x for x in list_children(drive_id, f_in_work["id"]) if _is_folder(x)]
 
         result = []
         for pf in project_folders:
-            # беремо ВСІ "Для КС" всередині кожного проекту
-            found = search_in_folder(drive_id, pf["id"], "Для КС")
+            # беремо ВСІ "Для КС" всередині кожного проекту через list_children
+            children = list_children(drive_id, pf["id"]) or []
             result.extend([
-                x for x in found
+                x for x in children
                 if _is_folder(x) and "для кс" in _lower(x.get("name", ""))
             ])
 

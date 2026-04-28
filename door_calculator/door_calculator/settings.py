@@ -148,26 +148,32 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 M365_SYNC_CHAINS = {
+    # КП: Проект → 2-Комерційна пропозиція → КП 1/КП 2/... → 1 Розрахунок матеріалів → Для КС*/
     "precalc": [
         {"type": "child_contains", "value": "2-Комерційна пропозиція"},
-        {"type": "child_all_contains", "value": "КП"},          # ✅ усі КП*
+        {"type": "child_all_contains", "value": "КП"},
         {"type": "child_contains", "value": "1 Розрахунок матеріалів"},
-        {"type": "search_all_contains", "value": "Для КС"},     # ✅ усі Для КС*
+        {"type": "child_all_contains", "value": "Для КС"},
     ],
+    # В роботу: Проект → 4-Проектування → 2 В роботу → Проект 1/Проект 2/... → Для КС*/
     "final": [
         {"type": "child_contains", "value": "4-Проектування"},
-        {"type": "search_all_contains", "value": "Проект"},     # якщо їх може бути багато
-        #{"type": "child_contains", "value": "3 Креслення в роботу"},
-        {"type": "search_all_contains", "value": "Для КС"},
+        {"type": "child_contains", "value": "В роботу"},
+        {"type": "child_all"},
+        {"type": "child_all_contains", "value": "Для КС"},
     ],
 
     # --- переробки ---
+    # Переробка: Проект → 1 Креслення попередні → Для КС*/
     "rework_pre": [
         {"type": "child_contains", "value": "1 Креслення попередні"},
-        {"type": "search_all_contains", "value": "Для КС"},
+        {"type": "child_all_contains", "value": "Для КС"},
     ],
+    # Переробка фінал: Проект → 3 Креслення в роботу → Для КС*/
     "rework_final": [
         {"type": "child_contains", "value": "3 Креслення в роботу"},
-        {"type": "search_all_contains", "value": "Для КС"},
+        {"type": "child_all_contains", "value": "Для КС"},
     ],
 }
+
+M365_SYNC_WORKERS = 4

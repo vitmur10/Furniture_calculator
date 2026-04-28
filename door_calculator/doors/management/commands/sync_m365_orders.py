@@ -148,7 +148,7 @@ def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: Li
 
     for step in chain:
         step_type = step["type"]
-        value = step["value"]
+        value = step.get("value", "")
 
         next_items: List[dict] = []
 
@@ -161,6 +161,11 @@ def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: Li
 
             elif step_type == "child_all_contains":
                 next_items.extend(pick_child_folders_contains(drive_id, cid, value))
+
+            elif step_type == "child_all":
+                # всі дочірні папки без фільтру
+                children = list_children(drive_id, cid) or []
+                next_items.extend([it for it in children if "folder" in it])
 
             elif step_type == "search_contains":
                 found = pick_search_folder_contains(drive_id, cid, value)
@@ -194,13 +199,13 @@ class Command(BaseCommand):
             help="Run sync in a loop",
         )
         parser.add_argument(
-            "--interval",
+            "--limit",
             type=int,
-            default=30,
-            help="Watch interval in seconds (default: 30)",
+            default=0,
+            help="Limit number of folders to process (for testing, 0 = no limit)",
         )
 
-    def _sync_once(self):
+    def _sync_once(self, limit=0):
         site_names = getattr(settings, "M365_SITE_DISPLAY_NAMES", None)
         if not site_names:
             site_names = [getattr(settings, "M365_SITE_DISPLAY_NAME", None)]
@@ -240,10 +245,17 @@ class Command(BaseCommand):
             drive_id = drive["id"]
 
             root_items = list_root_children(drive_id) or []
-            project_folders = [it for it in root_items if _is_folder(it)]
+            all_folders = [it for it in root_items if _is_folder(it)]
 
-            # ВИПРАВЛЕННЯ БАГ #2: current_root_ids тепер локальна для кожного сайту
-            current_root_ids: Set[str] = {it["id"] for it in project_folders}
+            # current_root_ids завжди з УСІХ папок — щоб не видалити зайвого
+            current_root_ids: Set[str] = {it["id"] for it in all_folders}
+
+            # limit тільки для тестування — обмежує кількість папок для обробки
+            if limit > 0:
+                project_folders = all_folders[:limit]
+                self.stdout.write(f"[DEBUG] Limiting to {limit} folders")
+            else:
+                project_folders = all_folders
 
             def fetch_folder_data(folder):
                 """Тільки запити до Graph API — без запису в БД."""
@@ -252,20 +264,15 @@ class Command(BaseCommand):
                 folder_url = folder.get("webUrl", "")
 
                 chain_leafs = {}
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as leaf_pool:
-                    def resolve_chain(item):
-                        chain_name, chain = item
+                # Резолвимо ланцюги послідовно — без вкладеного пулу
+                # (вкладений ThreadPoolExecutor блокує shutdown і висить)
+                for chain_name, chain in chains.items():
+                    try:
                         leafs = resolve_leaf_folders_by_chain(drive_id, folder_id, chain)
-                        return chain_name, leafs
-
-                    futures_inner = {leaf_pool.submit(resolve_chain, item): item for item in chains.items()}
-                    for future in concurrent.futures.as_completed(futures_inner):
-                        try:
-                            chain_name, leafs = future.result()
-                            if leafs:
-                                chain_leafs[chain_name] = leafs
-                        except Exception as e:
-                            self.stderr.write(f"Chain resolve error: {e}")
+                        if leafs:
+                            chain_leafs[chain_name] = leafs
+                    except Exception as e:
+                        self.stderr.write(f"Chain resolve error for '{folder_name}': {e}")
 
                 # Збираємо всі файли з Teams
                 seen_file_ids: Set[str] = set()
@@ -300,26 +307,32 @@ class Command(BaseCommand):
                     "new_images": new_images,
                 }
 
+            self.stdout.write(f"Found {len(project_folders)} folders to process")
+
             # КРОК 1: паралельно збираємо дані з Graph API (без запису в БД)
             folder_data_list = []
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(fetch_folder_data, folder): folder for folder in project_folders}
-                try:
-                    for future in concurrent.futures.as_completed(futures, timeout=120):
-                        try:
-                            folder_data_list.append(future.result(timeout=30))
-                        except concurrent.futures.TimeoutError:
-                            folder = futures[future]
-                            self.stderr.write(
-                                self.style.WARNING(f"Timeout fetching folder '{folder.get('name')}', skipping")
-                            )
-                        except Exception as e:
-                            folder = futures[future]
-                            self.stderr.write(
-                                self.style.ERROR(f"Error fetching folder '{folder.get('name')}': {e}")
-                            )
-                except concurrent.futures.TimeoutError:
-                    self.stderr.write(self.style.WARNING("Global pool timeout (120s), proceeding with collected data"))
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+            futures = {pool.submit(fetch_folder_data, folder): folder for folder in project_folders}
+            try:
+                for future in concurrent.futures.as_completed(futures, timeout=90):
+                    try:
+                        folder_data_list.append(future.result(timeout=25))
+                    except concurrent.futures.TimeoutError:
+                        folder = futures[future]
+                        self.stderr.write(
+                            self.style.WARNING(f"Timeout fetching folder '{folder.get('name')}', skipping")
+                        )
+                    except Exception as e:
+                        folder = futures[future]
+                        self.stderr.write(
+                            self.style.ERROR(f"Error fetching folder '{folder.get('name')}': {e}")
+                        )
+            except concurrent.futures.TimeoutError:
+                self.stderr.write(self.style.WARNING("Global pool timeout (90s), proceeding with collected data"))
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+
+            self.stdout.write(f"Collected data for {len(folder_data_list)} folders, writing to DB...")
 
             # КРОК 2: послідовно пишемо в БД (уникаємо database is locked)
             for data in folder_data_list:
@@ -437,12 +450,13 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         watch = options.get("watch", False)
         interval = options.get("interval", 5)
+        limit = options.get("limit", 0)
 
         if interval < 1:
             interval = 1
 
         if not watch:
-            self._sync_once()
+            self._sync_once(limit=limit)
             return
 
         self.stdout.write(self.style.WARNING(
@@ -451,7 +465,7 @@ class Command(BaseCommand):
 
         while True:
             try:
-                self._sync_once()
+                self._sync_once(limit=limit)
             except Exception as e:
                 self.stderr.write(self.style.ERROR(f"Sync error: {e}"))
             time.sleep(interval)
