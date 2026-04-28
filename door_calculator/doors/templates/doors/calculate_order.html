@@ -3676,5 +3676,11 @@ document.addEventListener("submit", async (e) => {
     window.location.reload();
   }
 });
+// Забороняємо зміну числових полів колесом миші
+document.addEventListener('wheel', function(e) {
+  if (document.activeElement && document.activeElement.type === 'number') {
+    document.activeElement.blur();
+  }
+}, { passive: false });
 </script>
 {% endblock %}
