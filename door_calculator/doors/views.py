@@ -452,6 +452,9 @@ def calculate_order(request, order_id):
             if mode == "replace":
                 for it in target_qs:
                     it.coefficients.set(coefs)
+            elif mode == "remove":
+                for it in target_qs:
+                    it.coefficients.remove(*coefs)
             else:
                 for it in target_qs:
                     it.coefficients.add(*coefs)
