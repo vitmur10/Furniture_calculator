@@ -1985,12 +1985,19 @@ def report_period_view(request):
         if vza < 0:
             vza = Decimal("0")
 
-        vza_period_by_order[num] = vza
-        vzag += vza
+            vza_period_by_order[num] = vza
+            vzag += vza
 
-    t_norma = (vzag / HV) if HV > 0 else Decimal("0")  # години по нормі
-    t_fact = total_all  # фактичні години
-    eff_percent = (t_norma / t_fact * Decimal("100")) if t_fact > 0 else Decimal("0")
+        # ХОЗ-роботи: work_hours × HV додаються до обсягу виконання
+        total_xoz_hours = Decimal(str(
+            logs.aggregate(total=Sum("work_hours"))["total"] or 0
+        ))
+        xoz_ks = total_xoz_hours * HV
+        vzag += xoz_ks
+
+        t_norma = (vzag / HV) if HV > 0 else Decimal("0")  # години по нормі
+        t_fact = total_all  # фактичні години
+        eff_percent = (t_norma / t_fact * Decimal("100")) if t_fact > 0 else Decimal("0")
 
     work_days = (end_date - start_date).days + 1
 
@@ -2008,6 +2015,8 @@ def report_period_view(request):
         # нові показники по методичці
         "hv": HV,
         "vzag": vzag,
+        "xoz_ks": xoz_ks,
+        "total_xoz_hours": total_xoz_hours,
         "t_norma": t_norma,
         "t_fact": t_fact,
         "eff_percent": eff_percent,

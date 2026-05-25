@@ -110,8 +110,15 @@
         ({{ work_days }} днів)
       </li>
 
+      {% if total_xoz_hours %}
       <li class="list-group-item">
-        Всього виконано за період (Vзаг):
+        ХОЗ-роботи за період:
+        <strong>{{ total_xoz_hours|floatformat:2 }} год × {{ hv }} = {{ xoz_ks|floatformat:2 }} к/с</strong>
+      </li>
+      {% endif %}
+
+      <li class="list-group-item">
+        Всього виконано за період (Vзаг, включно з ХОЗ):
         <strong>{{ vzag|floatformat:2 }} к/с</strong>
       </li>
 
