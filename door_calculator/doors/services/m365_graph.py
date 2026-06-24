@@ -1,9 +1,14 @@
-import requests
-import msal
-from django.conf import settings
-from urllib.parse import quote
-import time
+import logging
 import random
+import time
+from urllib.parse import quote
+
+import msal
+import requests
+from django.conf import settings
+
+logger = logging.getLogger("m365_graph")
+
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 _app = None
@@ -23,7 +28,6 @@ def _get_app():
 def get_app_token() -> str:
     app = _get_app()
 
-    # cache -> client credentials
     result = app.acquire_token_silent(settings.M365_SCOPE, account=None)
     if not result:
         result = app.acquire_token_for_client(scopes=settings.M365_SCOPE)
@@ -33,16 +37,30 @@ def get_app_token() -> str:
 
     return result["access_token"]
 
+
 RETRY_STATUS = {429, 503, 504}
 
-def graph(method: str, url_or_path: str, *, token: str = None, headers=None, params=None, data=None, json=None, timeout=20):
+
+def graph(
+    method: str,
+    url_or_path: str,
+    *,
+    token: str = None,
+    headers=None,
+    params=None,
+    data=None,
+    json=None,
+    timeout=20,
+):
     url = url_or_path if url_or_path.startswith("http") else (GRAPH_BASE + url_or_path)
 
     if token is None:
-        token = get_app_token()  # <-- твоя функція
+        token = get_app_token()
 
     if not token or not str(token).strip():
-        raise RuntimeError("M365 Graph token is empty. Check get_app_token() and app credentials.")
+        raise RuntimeError(
+            "M365 Graph token is empty. Check get_app_token() and app credentials."
+        )
 
     h = dict(headers or {})
     h["Authorization"] = f"Bearer {token}"
@@ -52,20 +70,39 @@ def graph(method: str, url_or_path: str, *, token: str = None, headers=None, par
     base_delay = 1.0
 
     for attempt in range(1, max_attempts + 1):
-        r = requests.request(method, url, headers=h, params=params, data=data, json=json, timeout=timeout)
+        r = requests.request(
+            method, url, headers=h, params=params, data=data, json=json, timeout=timeout
+        )
 
         if r.status_code in RETRY_STATUS:
-            retry_after = r.headers.get("Retry-After")
-            if retry_after:
+            retry_after_header = r.headers.get("Retry-After")
+            if retry_after_header:
                 try:
-                    delay = float(retry_after)
+                    delay = float(retry_after_header)
                 except Exception:
                     delay = base_delay
             else:
                 delay = min(base_delay * (2 ** (attempt - 1)), 30.0) + random.uniform(0, 0.5)
 
             if attempt == max_attempts:
+                logger.error(
+                    "M365 throttle: HTTP %s — вичерпано всі %d спроби. URL: %s",
+                    r.status_code,
+                    max_attempts,
+                    url,
+                )
                 raise RuntimeError(f"HTTP {r.status_code}: {r.text}")
+
+            logger.warning(
+                "M365 throttle: HTTP %s | спроба %d/%d | засинаємо на %.1f сек "
+                "(Retry-After заголовок: %s) | URL: %s",
+                r.status_code,
+                attempt,
+                max_attempts,
+                delay,
+                retry_after_header or "відсутній",
+                url,
+            )
 
             time.sleep(delay)
             continue
@@ -75,10 +112,11 @@ def graph(method: str, url_or_path: str, *, token: str = None, headers=None, par
 
         if not r.text:
             return {}
+
         return r.json()
 
+
 def graph_get(path: str, **kwargs):
-    # path типу: "/sites?search=*"
     return graph("GET", f"{GRAPH_BASE}{path}", **kwargs)
 
 
@@ -124,13 +162,16 @@ def search_in_folder(drive_id: str, folder_id: str, q: str) -> list:
 
 
 def graph_put(path: str, **kwargs):
-    # path типу: "/drives/{drive_id}/items/{folder_id}:/{filename}:/content"
     return graph("PUT", f"{GRAPH_BASE}{path}", **kwargs)
 
 
-def upload_bytes_to_folder(drive_id: str, folder_id: str, filename: str, content: bytes,
-                           content_type="application/pdf"):
-    # overwrite/upload
+def upload_bytes_to_folder(
+    drive_id: str,
+    folder_id: str,
+    filename: str,
+    content: bytes,
+    content_type="application/pdf",
+):
     safe_name = filename.replace("\\", "_").replace("/", "_")
     path = f"/drives/{drive_id}/items/{folder_id}:/{safe_name}:/content"
     headers = {"Content-Type": content_type}

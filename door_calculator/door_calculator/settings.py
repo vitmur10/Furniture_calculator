@@ -12,8 +12,13 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 import os
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# ---------------------------------------------------------------------------
+# Microsoft 365 / Graph API
+# ---------------------------------------------------------------------------
 
 M365_TENANT_ID = os.getenv("M365_TENANT_ID", "")
 M365_CLIENT_ID = os.getenv("M365_CLIENT_ID", "")
@@ -24,16 +29,72 @@ M365_SCOPE = ["https://graph.microsoft.com/.default"]
 
 raw_sites = os.getenv("M365_SITE_DISPLAY_NAMES", "Проекти 2026,Переробка профілю 2026")
 M365_SITE_DISPLAY_NAMES = [s.strip() for s in raw_sites.split(",") if s.strip()]
-M365_DRIVE_NAME = os.getenv("M365_DRIVE_NAME", "Документи")
-M365_ORDER_ROOT_FOLDER = os.getenv("M365_ORDER_ROOT_FOLDER", "Main")  # якщо замовлення НЕ в корені (типу "Main"), інакше пусто
-M365_TECH_KEYWORD = os.getenv("M365_TECH_KEYWORD", "Чертежи в работу")
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
+M365_DRIVE_NAME = os.getenv("M365_DRIVE_NAME", "Документи")
+
+# Коренева папка всередині drive (порожній рядок = корінь)
+M365_ORDER_ROOT_FOLDER = os.getenv("M365_ORDER_ROOT_FOLDER", "Main")
+
+M365_TECH_KEYWORD = os.getenv("M365_TECH_KEYWORD", "Чертежи в работу")
+
+# ---------------------------------------------------------------------------
+# Sync worker tuning
+# ---------------------------------------------------------------------------
+
+# Кількість паралельних воркерів.
+# При частому throttling (429) знижуйте до 2 — менше паралелізму,
+# але значно менша кількість Retry-After пауз в сумі.
+M365_SYNC_WORKERS = int(os.getenv("M365_SYNC_WORKERS", 2))
+
+# Загальний таймаут (секунди) на весь пул future.
+# Має бути > M365_FUTURE_TIMEOUT * M365_SYNC_WORKERS, щоб при одному
+# повільному воркері решта встигла завершитись нормально.
+# Формула запасу: max_retry_sleep(~180s) + запас(~120s) = ~300s.
+M365_POOL_TIMEOUT = int(os.getenv("M365_POOL_TIMEOUT", 300))
+
+# Таймаут на один окремий folder-future.
+# Microsoft Graph при throttling може спати до 30s за спробу × 6 спроб = 180s.
+# Ставимо з запасом: 60s достатньо для звичайних папок,
+# збільш до 120-180 якщо бачиш одиночні future-timeout у логах.
+M365_FUTURE_TIMEOUT = int(os.getenv("M365_FUTURE_TIMEOUT", 60))
+
+# ---------------------------------------------------------------------------
+# Ланцюги пошуку папок у SharePoint
+# ---------------------------------------------------------------------------
+
+M365_SYNC_CHAINS = {
+    # КП: Проект → 2-Комерційна пропозиція → КП 1/КП 2/... → 1 Розрахунок матеріалів → Для КС*/
+    "precalc": [
+        {"type": "child_contains", "value": "2-Комерційна пропозиція"},
+        {"type": "child_all_contains", "value": "КП"},
+        {"type": "child_contains", "value": "1 Розрахунок матеріалів"},
+        {"type": "child_all_contains", "value": "Для КС"},
+    ],
+    # В роботу: Проект → 4-Проектування → 2 В роботу → Проект 1/Проект 2/... → Для КС*/
+    "final": [
+        {"type": "child_contains", "value": "4-Проектування"},
+        {"type": "child_contains", "value": "В роботу"},
+        {"type": "child_all"},
+        {"type": "child_all_contains", "value": "Для КС"},
+    ],
+    # Переробка попередня: Проект → 1 Креслення попередні → Для КС*/
+    "rework_pre": [
+        {"type": "child_contains", "value": "1 Креслення попередні"},
+        {"type": "child_all_contains", "value": "Для КС"},
+    ],
+    # Переробка фінал: Проект → 3 Креслення в роботу → Для КС*/
+    "rework_final": [
+        {"type": "child_contains", "value": "3 Креслення в роботу"},
+        {"type": "child_all_contains", "value": "Для КС"},
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+
 SECRET_KEY = "django-insecure-fojb6-3@+u%rw5r2#)i5*3ra%4i-wd%2ne^*--(@vfa@b&-v0s"
 
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG", True)
 
 ALLOWED_HOSTS = ["4f62124b6562.ngrok-free.app", "localhost", "127.0.0.1", "173.242.54.102"]
@@ -49,7 +110,9 @@ CSRF_TRUSTED_ORIGINS = [
     "http://173.242.54.102:80",
 ]
 
+# ---------------------------------------------------------------------------
 # Application definition
+# ---------------------------------------------------------------------------
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -73,17 +136,18 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "door_calculator.urls"
+
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates'], 
-        'APP_DIRS': True,  
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
@@ -91,9 +155,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "door_calculator.wsgi.application"
 
-
+# ---------------------------------------------------------------------------
 # Database
-# https://docs.djangoproject.com/en/4.2/ref/settings/#databases
+# ---------------------------------------------------------------------------
 
 DATABASES = {
     "default": {
@@ -102,82 +166,73 @@ DATABASES = {
     }
 }
 
-
+# ---------------------------------------------------------------------------
 # Password validation
-# https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
+# ---------------------------------------------------------------------------
 
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
-    },
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-
+# ---------------------------------------------------------------------------
 # Internationalization
-# https://docs.djangoproject.com/en/4.2/topics/i18n/
+# ---------------------------------------------------------------------------
 
-LANGUAGE_CODE = 'uk'
-
+LANGUAGE_CODE = "uk"
 TIME_ZONE = "UTC"
-
 USE_I18N = True
-
 USE_TZ = True
 
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/4.2/howto/static-files/
+# ---------------------------------------------------------------------------
+# Static / Media
+# ---------------------------------------------------------------------------
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [
-    BASE_DIR / 'doors' / 'static',
-]
+STATICFILES_DIRS = [BASE_DIR / "doors" / "static"]
 
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
-
-# Default primary key field type
-# https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-M365_SYNC_CHAINS = {
-    # КП: Проект → 2-Комерційна пропозиція → КП 1/КП 2/... → 1 Розрахунок матеріалів → Для КС*/
-    "precalc": [
-        {"type": "child_contains", "value": "2-Комерційна пропозиція"},
-        {"type": "child_all_contains", "value": "КП"},
-        {"type": "child_contains", "value": "1 Розрахунок матеріалів"},
-        {"type": "child_all_contains", "value": "Для КС"},
-    ],
-    # В роботу: Проект → 4-Проектування → 2 В роботу → Проект 1/Проект 2/... → Для КС*/
-    "final": [
-        {"type": "child_contains", "value": "4-Проектування"},
-        {"type": "child_contains", "value": "В роботу"},
-        {"type": "child_all"},
-        {"type": "child_all_contains", "value": "Для КС"},
-    ],
+# ---------------------------------------------------------------------------
+# Logging
+# Виводить WARNING+ від m365_graph у stdout → journald підхопить автоматично.
+# У логах побачиш рядки виду:
+#   WARNING m365_graph: M365 throttle: HTTP 429 | спроба 2/6 | засинаємо на 14.3 сек ...
+# ---------------------------------------------------------------------------
 
-    # --- переробки ---
-    # Переробка: Проект → 1 Креслення попередні → Для КС*/
-    "rework_pre": [
-        {"type": "child_contains", "value": "1 Креслення попередні"},
-        {"type": "child_all_contains", "value": "Для КС"},
-    ],
-    # Переробка фінал: Проект → 3 Креслення в роботу → Для КС*/
-    "rework_final": [
-        {"type": "child_contains", "value": "3 Креслення в роботу"},
-        {"type": "child_all_contains", "value": "Для КС"},
-    ],
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {name}: {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        # Throttle/retry логи з m365_graph.py
+        "m365_graph": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        # Django-рівень: показувати тільки ERROR щоб не засмічувати journald
+        "django": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+    },
 }
-
-M365_SYNC_WORKERS = 4

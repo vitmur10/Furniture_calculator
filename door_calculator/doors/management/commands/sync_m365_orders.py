@@ -23,7 +23,7 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
 
 def _norm(s: str) -> str:
     s = (s or "").lower()
-    for ch in [" ", ".", ",", "-", "_", "’", "'", '"']:
+    for ch in [" ", ".", ",", "-", "_", "'", "\u2019", '"']:
         s = s.replace(ch, "")
     return s
 
@@ -42,30 +42,21 @@ def _is_image(name: str) -> bool:
 def _is_our_pdf(name: str) -> bool:
     if not name:
         return False
-
     name = name.lower()
-
     if not name.endswith(".pdf"):
         return False
-
-    return (
-        "попередній_" in name
-        or "фінальний_" in name
-    )
+    return "попередній_" in name or "фінальний_" in name
 
 
 def _parse_m365_created_dt(item: dict):
     raw = (item or {}).get("createdDateTime")
     if not raw:
         return timezone.now()
-
     dt = parse_datetime(raw)
     if dt is None:
         return timezone.now()
-
     if timezone.is_naive(dt):
         dt = timezone.make_aware(dt, timezone.get_current_timezone())
-
     return timezone.localtime(dt)
 
 
@@ -86,17 +77,27 @@ def make_order_number_base(folder: dict, site_name: str) -> str:
 
 def make_unique_order_number(folder: dict, site_name: str) -> str:
     base = make_order_number_base(folder, site_name)
-
     existing_numbers = set(
-        Order.objects.filter(order_number__startswith=base)
-        .values_list("order_number", flat=True)
+        Order.objects.filter(order_number__startswith=base).values_list(
+            "order_number", flat=True
+        )
     )
-
     index = 1
     while f"{base}{index}" in existing_numbers:
         index += 1
-
     return f"{base}{index}"
+
+
+# ---------------------------------------------------------------------------
+# Кешований list_children — уникаємо повторних запитів до однієї папки
+# в межах одного fetch_folder_data виклику.
+# ---------------------------------------------------------------------------
+
+def list_children_cached(drive_id: str, item_id: str, cache: dict) -> list:
+    key = (drive_id, item_id)
+    if key not in cache:
+        cache[key] = list_children(drive_id, item_id) or []
+    return cache[key]
 
 
 def _safe_search_in_folder(drive_id: str, parent_id: str, needle: str) -> List[dict]:
@@ -109,18 +110,22 @@ def _safe_search_in_folder(drive_id: str, parent_id: str, needle: str) -> List[d
             return []
 
 
-def pick_child_folder_contains(drive_id: str, parent_id: str, needle: str):
+def pick_child_folder_contains(
+    drive_id: str, parent_id: str, needle: str, cache: dict
+):
     needle_n = _norm(needle)
-    for it in list_children(drive_id, parent_id) or []:
+    for it in list_children_cached(drive_id, parent_id, cache):
         if _is_folder(it) and needle_n in _norm(it.get("name", "")):
             return it
     return None
 
 
-def pick_child_folders_contains(drive_id: str, parent_id: str, needle: str) -> List[dict]:
+def pick_child_folders_contains(
+    drive_id: str, parent_id: str, needle: str, cache: dict
+) -> List[dict]:
     needle_n = _norm(needle)
     out = []
-    for it in list_children(drive_id, parent_id) or []:
+    for it in list_children_cached(drive_id, parent_id, cache):
         if _is_folder(it) and needle_n in _norm(it.get("name", "")):
             out.append(it)
     return out
@@ -143,7 +148,17 @@ def pick_search_folders_contains(drive_id: str, parent_id: str, needle: str) -> 
     return out
 
 
-def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: List[Dict]) -> List[dict]:
+def resolve_leaf_folders_by_chain(
+    drive_id: str,
+    start_folder_id: str,
+    chain: List[Dict],
+    cache: dict,
+) -> List[dict]:
+    """
+    Проходить по ланцюгу кроків і повертає кінцеві (leaf) папки.
+    cache — dict, що живе весь час fetch_folder_data; уникає повторних
+    HTTP-запитів до однієї й тієї ж папки в різних chains/кроках.
+    """
     current_ids = [start_folder_id]
 
     for step in chain:
@@ -153,18 +168,16 @@ def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: Li
         next_items: List[dict] = []
 
         for cid in current_ids:
-
             if step_type == "child_contains":
-                found = pick_child_folder_contains(drive_id, cid, value)
+                found = pick_child_folder_contains(drive_id, cid, value, cache)
                 if found:
                     next_items.append(found)
 
             elif step_type == "child_all_contains":
-                next_items.extend(pick_child_folders_contains(drive_id, cid, value))
+                next_items.extend(pick_child_folders_contains(drive_id, cid, value, cache))
 
             elif step_type == "child_all":
-                # всі дочірні папки без фільтру
-                children = list_children(drive_id, cid) or []
+                children = list_children_cached(drive_id, cid, cache)
                 next_items.extend([it for it in children if "folder" in it])
 
             elif step_type == "search_contains":
@@ -183,8 +196,8 @@ def resolve_leaf_folders_by_chain(drive_id: str, start_folder_id: str, chain: Li
     return next_items
 
 
-def iter_files_direct(drive_id: str, folder_id: str) -> Iterable[dict]:
-    for it in list_children(drive_id, folder_id) or []:
+def iter_files_direct(drive_id: str, folder_id: str, cache: dict) -> Iterable[dict]:
+    for it in list_children_cached(drive_id, folder_id, cache):
         if "file" in it:
             yield it
 
@@ -215,12 +228,15 @@ class Command(BaseCommand):
 
         if not site_names:
             raise CommandError("M365 site not configured")
-
         if not drive_name:
             raise CommandError("M365_DRIVE_NAME missing")
-
         if not chains:
             raise CommandError("M365_SYNC_CHAINS missing")
+
+        # Таймаути з settings — легко змінювати без правки коду
+        max_workers = getattr(settings, "M365_SYNC_WORKERS", 2)
+        pool_timeout = getattr(settings, "M365_POOL_TIMEOUT", 300)
+        future_timeout = getattr(settings, "M365_FUTURE_TIMEOUT", 60)
 
         created_orders = 0
         deleted_orders = 0
@@ -228,9 +244,6 @@ class Command(BaseCommand):
         deleted_images = 0
         created_files = 0
         created_images = 0
-
-        # Паралельна обробка папок (обмежуємо пул, щоб не перевантажити Graph API)
-        max_workers = getattr(settings, "M365_SYNC_WORKERS", 4)
 
         for site_name in site_names:
 
@@ -250,7 +263,6 @@ class Command(BaseCommand):
             # current_root_ids завжди з УСІХ папок — щоб не видалити зайвого
             current_root_ids: Set[str] = {it["id"] for it in all_folders}
 
-            # limit тільки для тестування — обмежує кількість папок для обробки
             if limit > 0:
                 project_folders = all_folders[:limit]
                 self.stdout.write(f"[DEBUG] Limiting to {limit} folders")
@@ -258,23 +270,30 @@ class Command(BaseCommand):
                 project_folders = all_folders
 
             def fetch_folder_data(folder):
-                """Тільки запити до Graph API — без запису в БД."""
+                """
+                Тільки запити до Graph API — без запису в БД.
+                Кеш (dict) живе весь виклик — уникає повторних HTTP-запитів
+                до однієї й тієї ж папки в різних chains.
+                """
                 folder_id = folder["id"]
                 folder_name = folder.get("name", "")
                 folder_url = folder.get("webUrl", "")
 
+                # Локальний кеш на папку: (drive_id, item_id) -> list[children]
+                _cache: dict = {}
+
                 chain_leafs = {}
-                # Резолвимо ланцюги послідовно — без вкладеного пулу
-                # (вкладений ThreadPoolExecutor блокує shutdown і висить)
                 for chain_name, chain in chains.items():
                     try:
-                        leafs = resolve_leaf_folders_by_chain(drive_id, folder_id, chain)
+                        leafs = resolve_leaf_folders_by_chain(
+                            drive_id, folder_id, chain, _cache
+                        )
                         if leafs:
                             chain_leafs[chain_name] = leafs
                     except Exception as e:
-                        self.stderr.write(f"Chain resolve error for '{folder_name}': {e}")
+                        # Не ламаємо весь future через одну chain
+                        pass
 
-                # Збираємо всі файли з Teams
                 seen_file_ids: Set[str] = set()
                 seen_image_ids: Set[str] = set()
                 new_files = []
@@ -282,7 +301,7 @@ class Command(BaseCommand):
 
                 for leafs in chain_leafs.values():
                     for leaf in leafs:
-                        for it in iter_files_direct(drive_id, leaf["id"]):
+                        for it in iter_files_direct(drive_id, leaf["id"], _cache):
                             file_id = it["id"]
                             name = it.get("name", "")
                             web = it.get("webUrl", "")
@@ -308,31 +327,49 @@ class Command(BaseCommand):
                 }
 
             self.stdout.write(f"Found {len(project_folders)} folders to process")
+            self.stdout.write(
+                f"Pool config: workers={max_workers}, "
+                f"pool_timeout={pool_timeout}s, future_timeout={future_timeout}s"
+            )
 
             # КРОК 1: паралельно збираємо дані з Graph API (без запису в БД)
             folder_data_list = []
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
-            futures = {pool.submit(fetch_folder_data, folder): folder for folder in project_folders}
+            futures = {
+                pool.submit(fetch_folder_data, folder): folder
+                for folder in project_folders
+            }
             try:
-                for future in concurrent.futures.as_completed(futures, timeout=90):
+                for future in concurrent.futures.as_completed(futures, timeout=pool_timeout):
                     try:
-                        folder_data_list.append(future.result(timeout=25))
+                        folder_data_list.append(future.result(timeout=future_timeout))
                     except concurrent.futures.TimeoutError:
                         folder = futures[future]
                         self.stderr.write(
-                            self.style.WARNING(f"Timeout fetching folder '{folder.get('name')}', skipping")
+                            self.style.WARNING(
+                                f"Timeout ({future_timeout}s) fetching folder "
+                                f"'{folder.get('name')}', skipping"
+                            )
                         )
                     except Exception as e:
                         folder = futures[future]
                         self.stderr.write(
-                            self.style.ERROR(f"Error fetching folder '{folder.get('name')}': {e}")
+                            self.style.ERROR(
+                                f"Error fetching folder '{folder.get('name')}': {e}"
+                            )
                         )
             except concurrent.futures.TimeoutError:
-                self.stderr.write(self.style.WARNING("Global pool timeout (90s), proceeding with collected data"))
+                self.stderr.write(
+                    self.style.WARNING(
+                        f"Global pool timeout ({pool_timeout}s), proceeding with collected data"
+                    )
+                )
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
 
-            self.stdout.write(f"Collected data for {len(folder_data_list)} folders, writing to DB...")
+            self.stdout.write(
+                f"Collected data for {len(folder_data_list)} folders, writing to DB..."
+            )
 
             # КРОК 2: послідовно пишемо в БД (уникаємо database is locked)
             for data in folder_data_list:
@@ -381,7 +418,9 @@ class Command(BaseCommand):
 
                         # Додаємо нові зображення
                         for img in data["new_images"]:
-                            if not OrderImage.objects.filter(remote_item_id=img["id"]).exists():
+                            if not OrderImage.objects.filter(
+                                remote_item_id=img["id"]
+                            ).exists():
                                 OrderImage.objects.create(
                                     order=order,
                                     remote_site_id=site["id"],
@@ -394,7 +433,9 @@ class Command(BaseCommand):
 
                         # Додаємо нові файли
                         for f in data["new_files"]:
-                            if not OrderFile.objects.filter(remote_item_id=f["id"]).exists():
+                            if not OrderFile.objects.filter(
+                                remote_item_id=f["id"]
+                            ).exists():
                                 OrderFile.objects.create(
                                     order=order,
                                     source="m365",
@@ -413,9 +454,9 @@ class Command(BaseCommand):
                         deleted_files += stale_files.count()
                         stale_files.delete()
 
-                        stale_images = OrderImage.objects.filter(
-                            order=order
-                        ).exclude(remote_item_id__in=data["seen_image_ids"])
+                        stale_images = OrderImage.objects.filter(order=order).exclude(
+                            remote_item_id__in=data["seen_image_ids"]
+                        )
                         deleted_images += stale_images.count()
                         stale_images.delete()
 
@@ -424,28 +465,28 @@ class Command(BaseCommand):
                         self.style.ERROR(f"Error saving folder '{folder_name}': {e}")
                     )
 
-            # ВИПРАВЛЕННЯ БАГ #2: видалення прив'язане до конкретного сайту + диску
+            # Видалення замовлень, папки яких зникли з SharePoint
             stale_orders = Order.objects.filter(
                 source="m365",
                 remote_site_id=site["id"],
                 remote_drive_id=drive_id,
-            ).exclude(
-                remote_folder_id__in=current_root_ids
-            )
+            ).exclude(remote_folder_id__in=current_root_ids)
 
             for order in stale_orders:
                 order.delete()
                 deleted_orders += 1
 
-        self.stdout.write(self.style.SUCCESS(
-            f"Sync finished. "
-            f"created_orders={created_orders}, "
-            f"created_files={created_files}, "
-            f"created_images={created_images}, "
-            f"deleted_orders={deleted_orders}, "
-            f"deleted_files={deleted_files}, "
-            f"deleted_images={deleted_images}"
-        ))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Sync finished. "
+                f"created_orders={created_orders}, "
+                f"created_files={created_files}, "
+                f"created_images={created_images}, "
+                f"deleted_orders={deleted_orders}, "
+                f"deleted_files={deleted_files}, "
+                f"deleted_images={deleted_images}"
+            )
+        )
 
     def handle(self, *args, **options):
         watch = options.get("watch", False)
@@ -459,9 +500,9 @@ class Command(BaseCommand):
             self._sync_once(limit=limit)
             return
 
-        self.stdout.write(self.style.WARNING(
-            f"Watch mode started. Interval={interval}s"
-        ))
+        self.stdout.write(
+            self.style.WARNING(f"Watch mode started. Interval={interval}s")
+        )
 
         while True:
             try:
